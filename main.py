@@ -16,6 +16,7 @@ import threading
 import time
 import tkinter as tk
 import unicodedata
+import winsound
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -42,6 +43,8 @@ if getattr(sys, "frozen", False):
 else:
     APP_DIR = Path(__file__).parent
 CONFIG_PATH = APP_DIR / "config.json"
+# Bundled data files (sounds) live in the PyInstaller bundle when frozen.
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
 
 
 def ensure_single_instance():
@@ -97,6 +100,7 @@ DEFAULTS = {
     "hands_free_lock": False,  # pill padlock: tap hotkey to start, tap to send
     "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
+    "sounds": True,  # click on paste, click + wind gust on send
 }
 
 LANGUAGE_LABELS = {"fr": "Français", "en": "English", "mix": "Mix FR + EN"}
@@ -636,7 +640,18 @@ def clean_with_ollama(text, config, language=None):
     return cleaned or None
 
 
-def paste_text(text, paste_delay_ms):
+def play_sound(config, name):
+    if not config.get("sounds", True):
+        return
+    path = RESOURCE_DIR / "sons" / f"{name}.wav"
+    try:
+        winsound.PlaySound(str(path), winsound.SND_FILENAME
+                           | winsound.SND_ASYNC | winsound.SND_NODEFAULT)
+    except RuntimeError as exc:
+        print(f"[warn] Could not play sound {name}: {exc}")
+
+
+def paste_text(text, paste_delay_ms, on_pasted=None):
     try:
         previous_clipboard = pyperclip.paste()
     except pyperclip.PyperclipException:
@@ -644,6 +659,8 @@ def paste_text(text, paste_delay_ms):
     pyperclip.copy(text)
     time.sleep(0.15)  # let the clipboard settle before pasting
     keyboard.send("ctrl+v")
+    if on_pasted:
+        on_pasted()
     time.sleep(paste_delay_ms / 1000)
     if previous_clipboard is not None:
         try:
@@ -846,11 +863,15 @@ def main():
                 if not is_current(my_id):
                     print("[info] Dictation cancelled.")
                     return
-                paste_text(text, config["paste_delay_ms"])
+                # On send, the send sound (click + gust) replaces the click.
+                paste_text(text, config["paste_delay_ms"],
+                           on_pasted=None if command == "send"
+                           else lambda: play_sound(config, "coller"))
                 last_transcript.update(text=text, at=time.time())
                 print("[info] Pasted.")
             if command == "send":
                 keyboard.send("enter")
+                play_sound(config, "envoyer")
                 print("[info] Sent (Enter).")
         finally:
             finish(my_id)
@@ -916,7 +937,8 @@ def main():
             if controller.held or not text or not is_current(my_id):
                 print("[info] Resend skipped.")
                 return
-            paste_text(text, config["paste_delay_ms"])
+            paste_text(text, config["paste_delay_ms"],
+                       on_pasted=lambda: play_sound(config, "coller"))
             last_transcript["at"] = time.time()  # resend refreshes the window
             print("[info] Resent last transcript.")
         finally:

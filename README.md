@@ -34,6 +34,8 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
 - **Commandes vocales** : termine par « Colibri, colle. » pour coller sans
   toucher au clavier, ou « Colibri, envoie. » pour coller et appuyer sur
   Entrée.
+- **Sons discrets** : petit clic de bois quand le texte est collé, clic
+  puis courte rafale de vent quand le message est envoyé.
 - **Icône près de l'horloge** : bleue = prête, rouge = enregistrement,
   orange = traitement. Clic droit → langue ou Quitter.
 
@@ -124,6 +126,7 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
 | `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
+| `sounds` | `true` | Clic au collage, clic + rafale de vent à chaque envoi |
 | `paste_delay_ms` | `300` | Attente avant de restaurer ton presse-papier |
 | `sample_rate` | `16000` | Ne pas modifier |
 
