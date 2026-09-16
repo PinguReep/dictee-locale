@@ -49,6 +49,9 @@ RESEND_X = 318     # paste the last transcript again
 RESEND_R = 15
 CANCEL_X = 356     # discard the current dictation
 CANCEL_R = 13
+FLAG_X = WIDTH - 38  # language flag: opens the settings panel
+FLAG_HALF_W = 24
+HOVER_FILL = "#262640"
 BARS = 30
 BAR_WIDTH = 3
 BAR_GAP = 3
@@ -139,6 +142,7 @@ class Overlay:
         self.visible = False
         self.panel = None
         self.last_state = "idle"
+        self.hover = None  # name of the pill button under the mouse
         self.particles = [self._new_particle(first=True)
                           for _ in range(PARTICLES)]
 
@@ -158,7 +162,8 @@ class Overlay:
                                 bg=TRANSPARENT, highlightthickness=0)
         self.canvas.pack()
         self.canvas.bind("<Button-1>", self.on_pill_click)
-        self.canvas.configure(cursor="hand2")
+        self.canvas.bind("<Motion>", self._on_motion)
+        self.canvas.bind("<Leave>", self._on_leave)
         prevent_activation(self.win)
         self.win.withdraw()
         self._tick()
@@ -232,8 +237,10 @@ class Overlay:
         self._draw_cancel_button(cy)
 
         # Current language as flag(s), right side of the pill
+        if self.hover == "flag":
+            self._halo(FLAG_X, cy, FLAG_HALF_W + 2, 15)
         draw_language(self.canvas, self.config.get("language", "mix"),
-                      WIDTH - 38, cy, small=True)
+                      FLAG_X, cy, small=True)
 
     def _resend_remaining(self):
         """Seconds left before the last transcript is purged, or 0."""
@@ -247,6 +254,8 @@ class Overlay:
         x, r = LOCK_X, LOCK_R
         locked = self.config.get("hands_free_lock", False)
         c = self.canvas
+        if self.hover == "lock":
+            self._halo(x, cy, r + 5)
         if locked:
             c.create_oval(x - r, cy - r, x + r, cy + r, fill=ACCENT, width=0)
             ink = "white"
@@ -270,6 +279,8 @@ class Overlay:
             return
         ttl = self.config.get("transcript_ttl_seconds", 20)
         x, r = RESEND_X, RESEND_R
+        if self.hover == "resend":
+            self._halo(x, cy, r + 3)  # leaves room for the countdown label
         # Track + countdown ring draining counter-clockwise
         self.canvas.create_oval(x - r, cy - r, x + r, cy + r,
                                 outline=BORDER, width=2, fill=BG_SOFT)
@@ -284,6 +295,8 @@ class Overlay:
 
     def _draw_cancel_button(self, cy):
         x, r, d = CANCEL_X, CANCEL_R, 4
+        if self.hover == "cancel":
+            self._halo(x, cy, r + 5)
         self.canvas.create_oval(x - r, cy - r, x + r, cy + r,
                                 outline=BORDER, width=2, fill=BG_SOFT)
         self.canvas.create_line(x - d, cy - d, x + d, cy + d,
@@ -291,27 +304,52 @@ class Overlay:
         self.canvas.create_line(x - d, cy + d, x + d, cy - d,
                                 fill=DOT_COLOR, width=2)
 
+    def _button_at(self, x, y):
+        """Name of the pill button under (x, y), or None."""
+        cy = HEIGHT / 2
+        if math.hypot(x - LOCK_X, y - cy) <= LOCK_R + 3:
+            return "lock"
+        if (math.hypot(x - RESEND_X, y - cy) <= RESEND_R + 3
+                and self._resend_remaining() > 0):
+            return "resend"
+        if math.hypot(x - CANCEL_X, y - cy) <= CANCEL_R + 3:
+            return "cancel"
+        if abs(x - FLAG_X) <= FLAG_HALF_W and abs(y - cy) <= 15:
+            return "flag"
+        return None
+
+    def _on_motion(self, event):
+        hover = self._button_at(event.x, event.y)
+        if hover != self.hover:
+            self.hover = hover
+            self.canvas.configure(cursor="hand2" if hover else "")
+
+    def _on_leave(self, _event=None):
+        self.hover = None
+        self.canvas.configure(cursor="")
+
+    def _halo(self, x, cy, rx, ry=None):
+        ry = rx if ry is None else ry
+        self.canvas.create_oval(x - rx, cy - ry, x + rx, cy + ry,
+                                fill=HOVER_FILL, outline=ACCENT, width=1)
+
     def on_pill_click(self, event):
-        if math.hypot(event.x - LOCK_X, event.y - HEIGHT / 2) <= LOCK_R + 3:
+        button = self._button_at(event.x, event.y)
+        if button == "lock":
             locked = not self.config.get("hands_free_lock", False)
             self.config["hands_free_lock"] = locked
             self.save_config(self.config)
             print(f"[ui  ] hands-free lock {'on' if locked else 'off'}")
-            return
-        cy = HEIGHT / 2
-        if (math.hypot(event.x - RESEND_X, event.y - cy) <= RESEND_R + 3
-                and self._resend_remaining() > 0
-                and self.state["value"] == "recording"):
+        elif button == "resend" and self.state["value"] == "recording":
             print("[ui  ] resend clicked")
             self.close_panel()
             self.actions.get("resend", lambda: None)()
-            return
-        if math.hypot(event.x - CANCEL_X, event.y - cy) <= CANCEL_R + 3:
+        elif button == "cancel":
             print("[ui  ] cancel clicked")
             self.close_panel()
             self.actions.get("cancel", lambda: None)()
-            return
-        self.toggle_panel()
+        elif button == "flag":
+            self.toggle_panel()
 
     def _tick(self):
         if self.quit_event.is_set():
@@ -338,6 +376,7 @@ class Overlay:
         elif self.visible:
             self.win.withdraw()
             self.visible = False
+            self.hover = None
             self.close_panel()
         self.root.after(33, self._tick)
 

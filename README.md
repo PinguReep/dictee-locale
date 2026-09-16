@@ -21,8 +21,8 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
   après le collage.
 - **Pilule flottante** en bas de l'écran pendant la dictée : forme d'onde de
   ton micro en direct, drapeau de la langue active.
-- **Réglages en un clic** : clique sur la pilule pour changer de langue ou de
-  micro, sans redémarrer l'app et même en pleine dictée.
+- **Réglages en un clic** : clique sur le drapeau de la pilule pour changer de
+  langue ou de micro, sans redémarrer l'app et même en pleine dictée.
 - **Mode mains libres (cadenas 🔒)** : Ctrl+Alt démarre la dictée, tu te
   balades entre les fenêtres, Ctrl+Alt à nouveau et le texte est collé là où
   tu es.
@@ -70,12 +70,12 @@ mets-y un raccourci vers l'exe.
 **Dictée classique** : maintiens Ctrl+Alt, parle, relâche. Le texte arrive en
 moins d'une seconde.
 
-**Pendant que tu maintiens Ctrl+Alt**, la pilule est cliquable (ton curseur
-ne perd jamais le focus) :
+**Pendant la dictée**, les boutons de la pilule s'éclairent au survol et sont
+cliquables (ton curseur ne perd jamais le focus) :
 
 | Élément | Action |
 |---|---|
-| Pilule | Ouvre les réglages : langue et micro. Tout se ferme quand tu relâches |
+| Drapeau | Ouvre les réglages : langue et micro. Tout se ferme quand tu relâches |
 | 🔒 Cadenas | Active/désactive le mode mains libres (reste activé jusqu'au prochain clic) |
 | ↺ | Recolle le dernier texte au curseur et ferme la pilule (visible 20 s après une dictée). Si tu maintiens Ctrl+Alt, le collage se fait dès que tu relâches |
 | ✕ | Annule la dictée en cours : rien n'est collé |
