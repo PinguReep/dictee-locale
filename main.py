@@ -16,6 +16,7 @@ import threading
 import time
 import tkinter as tk
 import unicodedata
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import keyboard
@@ -93,7 +94,7 @@ DEFAULTS = {
     "language": "mix",  # "fr", "en", or "mix" (auto between the two)
     "transcript_ttl_seconds": 20,  # resend window for the last transcript
     "hands_free_lock": False,  # pill padlock: tap hotkey to start, tap to send
-    "voice_commands": True,  # "Dictée, colle." / "Dictée, envoie." at the end
+    "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
 }
 
@@ -468,13 +469,12 @@ def transcribe(model, audio, dictionary=(), language="mix"):
     return text, info.language
 
 
-# Spoken end-of-dictation commands: "... à demain. Dictée, envoie."
-# The wake word keeps ordinary sentences ("je colle le lien", "envoie-moi
-# ça") from triggering, and only the very last words spoken count.
-VOICE_WAKE_WORDS = {"dictee", "dicte", "dictez", "dicter", "dictes",
-                    "dictation"}
-VOICE_PASTE_WORDS = {"colle", "coller", "colles", "collez", "col", "paste"}
-VOICE_SEND_WORDS = {"envoie", "envoi", "envoies", "envoyer", "envoyez", "send"}
+# Spoken end-of-dictation commands: "... à demain. Colibri, envoie."
+# "Colibri" sounds like no common word, so ordinary sentences never trigger;
+# only the very last words spoken count. Matching is lenient because the
+# final transcription may spell the command differently ("col", "call").
+VOICE_WAKE_WORD = "colibri"
+VOICE_SPLIT_SEND = {"voie", "voix", "vois", "voit"}  # "envoie" heard "en voie"
 VOICE_TAIL_SECONDS = 4.0
 VOICE_SILENCE_SECONDS = 0.6  # silence required after the command (live check)
 VOICE_CHECK_INTERVAL = 1.0
@@ -485,26 +485,56 @@ def _plain(word):
     return "".join(c for c in decomposed if not unicodedata.combining(c))
 
 
-def extract_voice_command(text):
+def _is_wake(word):
+    return SequenceMatcher(None, word, VOICE_WAKE_WORD).ratio() >= 0.75
+
+
+def _verb(word):
+    if _is_wake(word):
+        return None
+    if word.startswith(("col", "kol")) or word in ("call", "coal", "paste"):
+        return "paste"
+    if word.startswith(("envo", "anvo")) or word == "send":
+        return "send"
+    return None
+
+
+def extract_voice_command(text, assume_command=None):
     """Splits a trailing voice command off the transcript.
 
-    Returns (text_without_command, "paste" | "send" | None).
+    Returns (text_without_command, "paste" | "send" | None). When the live
+    check already heard a command (`assume_command`), the trailing command
+    words are removed even if this transcription spelled them oddly.
     """
     tokens = list(re.finditer(r"\w+", text))
     words = [_plain(t.group()) for t in tokens]
+    n = len(words)
+
+    def wake_start(end):
+        if end >= 0 and _is_wake(words[end]):
+            return end
+        if end >= 1 and _is_wake(words[end - 1] + words[end]):
+            return end - 1
+        return None
+
     command = start = None
-    # Whisper sometimes hears "envoie" as "en voie" / "en voix"
-    if (len(words) >= 3 and words[-3] in VOICE_WAKE_WORDS
-            and words[-2] == "en" and words[-1] in ("voie", "voix")):
-        command, start = "send", tokens[-3].start()
-    elif len(words) >= 2 and words[-2] in VOICE_WAKE_WORDS:
-        if words[-1] in VOICE_SEND_WORDS:
-            command, start = "send", tokens[-2].start()
-        elif words[-1] in VOICE_PASTE_WORDS:
-            command, start = "paste", tokens[-2].start()
+    if n >= 3 and words[-2] == "en" and words[-1] in VOICE_SPLIT_SEND:
+        start = wake_start(n - 3)
+        command = "send" if start is not None else None
+    if command is None and n >= 2 and _verb(words[-1]):
+        start = wake_start(n - 2)
+        command = _verb(words[-1]) if start is not None else None
+    if command is None and assume_command:
+        command = assume_command
+        start = next((i for i in range(n - 1, max(n - 5, -1), -1)
+                      if _is_wake(words[i])), max(n - 2, 0))
+        print("[warn] Command spelled differently in the final transcript; "
+              "trailing words removed.")
     if command is None:
         return text, None
-    return text[:start].rstrip(" ,;:-\u2013\u2014\n"), command
+    if n == 0:
+        return "", command
+    return text[:tokens[start].start()].rstrip(" ,;:-\u2013\u2014\n"), command
 
 
 def detect_live_voice_command(model, tail, language, sample_rate):
@@ -750,11 +780,12 @@ def main():
                                         config["language"])
             command = None
             if config.get("voice_commands", True):
-                text, command = extract_voice_command(text)
-                if live_command and not command:
-                    print("[warn] Voice command heard live but missing from "
-                          "the final transcript; applying it anyway.")
-                command = command or live_command
+                text, command = extract_voice_command(
+                    text, assume_command=live_command)
+                last_words = re.findall(r"\w+", text)[-3:]
+                if not command and any(_is_wake(_plain(w)) for w in last_words):
+                    print("[warn] Wake word heard but no command understood: "
+                          f"{' '.join(last_words)!r}")
                 if command:
                     print(f"[info] Voice command: {command}")
             if not is_current(my_id):

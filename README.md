@@ -31,8 +31,8 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
   20 secondes. Le texte est gardé uniquement en mémoire vive, puis effacé.
 - **Annulation (✕)** : tu as commencé à parler et finalement non ? Un clic et
   rien n'est collé.
-- **Commandes vocales** : termine par « Dictée, colle. » pour coller sans
-  toucher au clavier, ou « Dictée, envoie. » pour coller et appuyer sur
+- **Commandes vocales** : termine par « Colibri, colle. » pour coller sans
+  toucher au clavier, ou « Colibri, envoie. » pour coller et appuyer sur
   Entrée.
 - **Icône près de l'horloge** : bleue = prête, rouge = enregistrement,
   orange = traitement. Clic droit → langue ou Quitter.
@@ -90,17 +90,18 @@ courte pause :
 
 | Tu dis | Effet |
 |---|---|
-| « Dictée, colle. » | Colle le texte (comme Ctrl+Alt) |
-| « Dictée, envoie. » | Colle le texte puis appuie sur **Entrée** |
+| « Colibri, colle. » | Colle le texte (comme Ctrl+Alt) |
+| « Colibri, envoie. » | Colle le texte puis appuie sur **Entrée** |
 
 - En **mode mains libres**, la commande est détectée en direct : pas besoin
   de toucher au clavier, pratique avec un casque sans fil.
 - En mode maintenu, elle est appliquée quand tu relâches Ctrl+Alt.
-- « Dictée, envoie. » dite seule envoie un message déjà collé.
+- « Colibri, envoie. » dite seule envoie un message déjà collé.
 - La commande n'est jamais collée dans ton texte et ne compte qu'à la toute
-  fin : « dictée » ou « envoie » au milieu d'une phrase ne déclenchent rien,
-  les longs silences non plus.
-- En anglais : « Dictation, paste. » / « Dictation, send. ».
+  fin : « colibri » ou « envoie » au milieu d'une phrase ne déclenchent rien,
+  les longs silences non plus. « Colibri » a été choisi car aucun mot courant
+  ne lui ressemble.
+- En anglais : « Colibri, paste. » / « Colibri, send. ».
 - Pour désactiver : `"voice_commands": false`.
 
 ## Réglages (`config.json`)
@@ -121,7 +122,7 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `microphone_device` | `null` | `null` = micro par défaut (changeable depuis la pilule) |
 | `hands_free_lock` | `false` | Mode mains libres |
 | `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
-| `voice_commands` | `true` | Commandes « Dictée, colle. » / « Dictée, envoie. » |
+| `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
 | `paste_delay_ms` | `300` | Attente avant de restaurer ton presse-papier |
 | `sample_rate` | `16000` | Ne pas modifier |
