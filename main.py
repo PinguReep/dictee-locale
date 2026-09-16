@@ -31,6 +31,7 @@ import sounddevice as sd
 OLLAMA_SESSION = requests.Session()
 OLLAMA_SESSION.trust_env = False
 from faster_whisper import WhisperModel
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 from PIL import Image, ImageDraw
 
 from overlay import Overlay
@@ -428,6 +429,23 @@ WHISPER_OPTIONS = {
 }
 
 
+# Retry settings when the strict pass drops speech: Whisper skips a whole
+# 30 s window it judges "probably silent" with low confidence, which happens
+# with distant or mumbled speech (e.g. walking around with a wireless headset).
+RELAXED_WHISPER_OPTIONS = {
+    "vad_filter": True,
+    "condition_on_previous_text": False,
+    "no_speech_threshold": None,
+}
+MIN_WORDS_PER_SPEECH_SECOND = 1.0  # normal speech is ~2.5 words per second
+
+
+def speech_seconds(audio, sample_rate=16000):
+    stamps = get_speech_timestamps(
+        audio, VadOptions(min_silence_duration_ms=500), sampling_rate=sample_rate)
+    return sum(s["end"] - s["start"] for s in stamps) / sample_rate
+
+
 def join_segments(segments):
     kept = []
     for segment in segments:
@@ -463,6 +481,17 @@ def transcribe(model, audio, dictionary=(), language="mix"):
             **WHISPER_OPTIONS
         )
         text = join_segments(segments)
+    speech = speech_seconds(audio) if len(audio) > 3 * 16000 else 0.0
+    if speech >= 2.0 and len(text.split()) < speech * MIN_WORDS_PER_SPEECH_SECOND:
+        segments, _ = model.transcribe(
+            audio, language=info.language if info.language in ("fr", "en")
+            else forced, **RELAXED_WHISPER_OPTIONS)
+        retry = join_segments(segments)
+        print(f"[warn] Transcript looked incomplete ({len(text.split())} words "
+              f"for {speech:.0f}s of speech); relaxed retry gave "
+              f"{len(retry.split())} words.")
+        if len(retry.split()) > len(text.split()):
+            text = retry
     if text:
         print(f"[info] Language: {info.language} "
               f"(p={info.language_probability:.2f})")
@@ -511,14 +540,27 @@ def extract_voice_command(text, assume_command=None):
     n = len(words)
 
     def wake_start(end):
-        if end >= 0 and _is_wake(words[end]):
+        if end < 0:
+            return None
+        single = SequenceMatcher(None, words[end], VOICE_WAKE_WORD).ratio()
+        if single >= 0.9:
             return end
-        if end >= 1 and _is_wake(words[end - 1] + words[end]):
+        # "Call Libri": the wake word split in two tokens. The first half
+        # must itself sound like the start of the wake word, so a real word
+        # before the command ("ok Kolibri") is kept.
+        if (end >= 1 and SequenceMatcher(
+                None, words[end - 1], VOICE_WAKE_WORD[:4]).ratio() >= 0.5
+                and _is_wake(words[end - 1] + words[end])):
             return end - 1
-        return None
+        return end if single >= 0.75 else None
 
     command = start = None
-    if n >= 3 and words[-2] == "en" and words[-1] in VOICE_SPLIT_SEND:
+    last = words[-1] if n else ""
+    size = len(VOICE_WAKE_WORD)
+    if (len(last) > size and _is_wake(last[:size])
+            and _verb(last[size:])):  # "Colibricol": merged into one token
+        command, start = _verb(last[size:]), n - 1
+    if command is None and n >= 3 and words[-2] == "en" and words[-1] in VOICE_SPLIT_SEND:
         start = wake_start(n - 3)
         command = "send" if start is not None else None
     if command is None and n >= 2 and _verb(words[-1]):
