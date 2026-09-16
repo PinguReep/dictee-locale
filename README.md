@@ -27,8 +27,13 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
   balades entre les fenêtres, Ctrl+Alt à nouveau et le texte est collé là où
   tu es.
 - **Renvoi du dernier texte (↺)** : si le collage est parti dans le vide (pas
-  de champ de texte sélectionné), recolle-le dans les 15 secondes. Le texte
-  est gardé uniquement en mémoire vive, puis effacé.
+  de champ de texte sélectionné), un clic le recolle aussitôt, pendant
+  20 secondes. Le texte est gardé uniquement en mémoire vive, puis effacé.
+- **Annulation (✕)** : tu as commencé à parler et finalement non ? Un clic et
+  rien n'est collé.
+- **Commandes vocales** : termine par « Dictée, colle. » pour coller sans
+  toucher au clavier, ou « Dictée, envoie. » pour coller et appuyer sur
+  Entrée.
 - **Icône près de l'horloge** : bleue = prête, rouge = enregistrement,
   orange = traitement. Clic droit → langue ou Quitter.
 
@@ -70,12 +75,33 @@ ne perd jamais le focus) :
 |---|---|
 | Pilule | Ouvre les réglages : langue et micro. Tout se ferme quand tu relâches |
 | 🔒 Cadenas | Active/désactive le mode mains libres (reste activé jusqu'au prochain clic) |
-| ↺ | Arme le renvoi du dernier texte : relâche Ctrl+Alt et il est recollé. Visible 15 s après une dictée |
+| ↺ | Recolle le dernier texte au curseur et ferme la pilule (visible 20 s après une dictée). Si tu maintiens Ctrl+Alt, le collage se fait dès que tu relâches |
+| ✕ | Annule la dictée en cours : rien n'est collé |
 
 **Mode mains libres** : maintiens Ctrl+Alt, clique sur le cadenas, relâche.
 L'enregistrement continue ; change de fenêtre, place ton curseur, puis appuie
 et relâche Ctrl+Alt pour envoyer. Taper `@`, `#` ou `€` (AltGr) pendant la
 dictée ne l'interrompt pas.
+
+## Commandes vocales
+
+Termine ta dictée par l'une de ces phrases, **en dernier**, puis marque une
+courte pause :
+
+| Tu dis | Effet |
+|---|---|
+| « Dictée, colle. » | Colle le texte (comme Ctrl+Alt) |
+| « Dictée, envoie. » | Colle le texte puis appuie sur **Entrée** |
+
+- En **mode mains libres**, la commande est détectée en direct : pas besoin
+  de toucher au clavier, pratique avec un casque sans fil.
+- En mode maintenu, elle est appliquée quand tu relâches Ctrl+Alt.
+- « Dictée, envoie. » dite seule envoie un message déjà collé.
+- La commande n'est jamais collée dans ton texte et ne compte qu'à la toute
+  fin : « dictée » ou « envoie » au milieu d'une phrase ne déclenchent rien,
+  les longs silences non plus.
+- En anglais : « Dictation, paste. » / « Dictation, send. ».
+- Pour désactiver : `"voice_commands": false`.
 
 ## Réglages (`config.json`)
 
@@ -94,7 +120,9 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `dictionary` | termes tech | Mots et noms propres à bien orthographier (prénoms, marques, jargon) |
 | `microphone_device` | `null` | `null` = micro par défaut (changeable depuis la pilule) |
 | `hands_free_lock` | `false` | Mode mains libres |
-| `transcript_ttl_seconds` | `15` | Durée de disponibilité du renvoi ↺ |
+| `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
+| `voice_commands` | `true` | Commandes « Dictée, colle. » / « Dictée, envoie. » |
+| `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
 | `paste_delay_ms` | `300` | Attente avant de restaurer ton presse-papier |
 | `sample_rate` | `16000` | Ne pas modifier |
 
@@ -108,6 +136,11 @@ contient aussi le texte dicté : ne le partage pas.
   encore (ou a planté : regarde `dictation.log`).
 - Un autre logiciel utilise peut-être déjà Ctrl+Alt : change `hotkey`.
 - Les fenêtres lancées en administrateur ne reçoivent pas la dictée.
+
+**La pilule reste affichée / Ctrl+Alt ne répond plus**
+- Clique sur ✕ pour annuler. Si Ollama tarde à répondre, l'app colle le texte
+  brut au bout d'une dizaine de secondes au lieu de rester bloquée.
+- Le journal `dictation.log` est horodaté : il montre l'étape qui a traîné.
 
 **Le texte n'est pas nettoyé (« euh » conservés)**
 - Ollama n'est pas lancé ou le modèle manque : `ollama pull qwen2.5:7b`.

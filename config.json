@@ -25,6 +25,7 @@
     "copier-coller"
   ],
   "language": "fr",
-  "transcript_ttl_seconds": 15,
-  "hands_free_lock": false
+  "transcript_ttl_seconds": 20,
+  "hands_free_lock": false,
+  "voice_commands": true
 }

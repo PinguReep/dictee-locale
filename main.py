@@ -10,10 +10,12 @@ import ctypes
 import importlib.util
 import json
 import os
+import re
 import sys
 import threading
 import time
 import tkinter as tk
+import unicodedata
 from pathlib import Path
 
 import keyboard
@@ -48,11 +50,33 @@ def ensure_single_instance():
         sys.exit(0)
 
 
+class TimestampedLog:
+    """Prefixes each log line with the time, to spot slow or stuck steps."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.at_line_start = True
+
+    def write(self, text):
+        for part in text.splitlines(keepends=True):
+            if self.at_line_start and part.strip():
+                self.stream.write(time.strftime("%H:%M:%S "))
+            self.stream.write(part)
+            self.at_line_start = part.endswith("\n")
+        return len(text)
+
+    def flush(self):
+        self.stream.flush()
+
+    def __getattr__(self, name):
+        return getattr(self.stream, name)
+
+
 def setup_frozen_logging():
     """In a --noconsole exe there is no stdout: send prints to a log file."""
     if getattr(sys, "frozen", False) and sys.stdout is None:
         log = open(APP_DIR / "dictation.log", "a", encoding="utf-8", buffering=1)
-        sys.stdout = sys.stderr = log
+        sys.stdout = sys.stderr = TimestampedLog(log)
         print(f"--- started {time.strftime('%Y-%m-%d %H:%M:%S')} ---")
 
 DEFAULTS = {
@@ -67,8 +91,10 @@ DEFAULTS = {
     "microphone_device": None,
     "dictionary": [],
     "language": "mix",  # "fr", "en", or "mix" (auto between the two)
-    "transcript_ttl_seconds": 15,  # resend window for the last transcript
+    "transcript_ttl_seconds": 20,  # resend window for the last transcript
     "hands_free_lock": False,  # pill padlock: tap hotkey to start, tap to send
+    "voice_commands": True,  # "Dictée, colle." / "Dictée, envoie." at the end
+    "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
 }
 
 LANGUAGE_LABELS = {"fr": "Français", "en": "English", "mix": "Mix FR + EN"}
@@ -91,6 +117,19 @@ KEY_ALIASES = {
 
 def normalize_key(name):
     return KEY_ALIASES.get(name.lower(), name.lower())
+
+
+VK_CODES = {"ctrl": (0x11,), "alt": (0x12,), "shift": (0x10,),
+            "windows": (0x5B, 0x5C)}
+
+
+def key_physically_down(name):
+    """True if the (normalized) key is down right now; unknown keys: True."""
+    codes = VK_CODES.get(name)
+    if codes is None:
+        return True
+    return any(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000
+               for vk in codes)
 
 CLEANUP_SYSTEM_PROMPT = """You clean up raw speech-to-text transcripts.
 
@@ -174,8 +213,11 @@ class HotkeyController:
     Stopping happens on release so no modifier is still down during Ctrl+V.
     """
 
-    def __init__(self, hotkey_parts, get_state, is_locked, start, stop):
+    def __init__(self, hotkey_parts, get_state, is_locked, start, stop,
+                 is_down=None):
         self.parts = hotkey_parts
+        self.is_down = is_down  # physical key state, to recover lost key-ups
+        self.down_since = {}
         self.get_state = get_state
         self.is_locked = is_locked
         self.start = start
@@ -188,10 +230,24 @@ class HotkeyController:
 
     def handle(self, name, is_down):
         name = normalize_key(name)
+        now = time.monotonic()
         if is_down:
             self.pressed.add(name)
+            self.down_since.setdefault(name, now)
         else:
             self.pressed.discard(name)
+            self.down_since.pop(name, None)
+        if self.is_down is not None:
+            # A key-up can be lost (secure desktop, elevated window, sleep):
+            # that key then counts as held forever and the hotkey goes dead.
+            stale = {k for k in self.pressed
+                     if k != name and now - self.down_since[k] > 1.5
+                     and not self.is_down(k)}
+            if stale:
+                self.pressed -= stale
+                for k in stale:
+                    del self.down_since[k]
+                print(f"[warn] Recovered stuck keys: {sorted(stale)}")
         held = self.parts <= self.pressed
         press, release = held and not self.held, self.held and not held
         self.held = held
@@ -272,6 +328,19 @@ class Recorder:
             self._stream.start()
         except sd.PortAudioError as exc:
             print(f"[error] Could not switch microphone mid-recording: {exc}")
+
+    def snapshot(self, seconds):
+        """Last `seconds` of the ongoing recording, without stopping it."""
+        need = int(seconds * self.sample_rate)
+        tail, total = [], 0
+        for chunk in reversed(list(self._chunks)):
+            tail.append(chunk)
+            total += len(chunk)
+            if total >= need:
+                break
+        if not tail:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(tail[::-1]).flatten()[-need:]
 
     def stop(self):
         """Stops the stream and returns the recording as a 1-D float32 array."""
@@ -399,6 +468,66 @@ def transcribe(model, audio, dictionary=(), language="mix"):
     return text, info.language
 
 
+# Spoken end-of-dictation commands: "... à demain. Dictée, envoie."
+# The wake word keeps ordinary sentences ("je colle le lien", "envoie-moi
+# ça") from triggering, and only the very last words spoken count.
+VOICE_WAKE_WORDS = {"dictee", "dicte", "dictez", "dicter", "dictes",
+                    "dictation"}
+VOICE_PASTE_WORDS = {"colle", "coller", "colles", "collez", "col", "paste"}
+VOICE_SEND_WORDS = {"envoie", "envoi", "envoies", "envoyer", "envoyez", "send"}
+VOICE_TAIL_SECONDS = 4.0
+VOICE_SILENCE_SECONDS = 0.6  # silence required after the command (live check)
+VOICE_CHECK_INTERVAL = 1.0
+
+
+def _plain(word):
+    decomposed = unicodedata.normalize("NFKD", word.lower())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def extract_voice_command(text):
+    """Splits a trailing voice command off the transcript.
+
+    Returns (text_without_command, "paste" | "send" | None).
+    """
+    tokens = list(re.finditer(r"\w+", text))
+    words = [_plain(t.group()) for t in tokens]
+    command = start = None
+    # Whisper sometimes hears "envoie" as "en voie" / "en voix"
+    if (len(words) >= 3 and words[-3] in VOICE_WAKE_WORDS
+            and words[-2] == "en" and words[-1] in ("voie", "voix")):
+        command, start = "send", tokens[-3].start()
+    elif len(words) >= 2 and words[-2] in VOICE_WAKE_WORDS:
+        if words[-1] in VOICE_SEND_WORDS:
+            command, start = "send", tokens[-2].start()
+        elif words[-1] in VOICE_PASTE_WORDS:
+            command, start = "paste", tokens[-2].start()
+    if command is None:
+        return text, None
+    return text[:start].rstrip(" ,;:-\u2013\u2014\n"), command
+
+
+def detect_live_voice_command(model, tail, language, sample_rate):
+    """Looks for a command at the end of the last seconds of a hands-free
+    recording, followed by a short silence. Returns "paste", "send" or None.
+    """
+    segments, _ = model.transcribe(
+        tail, language=language if language in ("fr", "en") else "fr",
+        beam_size=1, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 300},
+        condition_on_previous_text=False, word_timestamps=True,
+    )
+    words = [w for segment in segments for w in (segment.words or [])]
+    if len(words) < 2:
+        return None
+    _, command = extract_voice_command("".join(w.word for w in words))
+    if command is None:
+        return None
+    if words[-1].end > len(tail) / sample_rate - VOICE_SILENCE_SECONDS:
+        return None  # still talking right after the command words
+    return command
+
+
 def clean_with_ollama(text, config, language=None):
     """Returns the cleaned transcript, or None if Ollama failed."""
     url = config["ollama_url"].rstrip("/") + "/api/chat"
@@ -416,11 +545,14 @@ def clean_with_ollama(text, config, language=None):
         "model": config["ollama_model"],
         "messages": messages,
         "stream": False,
-        "keep_alive": "30m",  # avoid the reload delay after an idle pause
+        "keep_alive": config.get("ollama_keep_alive", -1),
         "options": {"temperature": 0},
     }
+    # A slow or stuck Ollama must never freeze dictation: fall back to the
+    # raw transcript after a short wait that grows with the text length.
+    timeout = 10 + len(text.split()) / 20
     try:
-        response = OLLAMA_SESSION.post(url, json=payload, timeout=60)
+        response = OLLAMA_SESSION.post(url, json=payload, timeout=timeout)
         response.raise_for_status()
         cleaned = response.json()["message"]["content"].strip()
     except (requests.RequestException, KeyError, ValueError) as exc:
@@ -491,7 +623,8 @@ def warm_up_ollama(config):
     A /api/generate call without a prompt just loads the model.
     """
     url = config["ollama_url"].rstrip("/") + "/api/generate"
-    payload = {"model": config["ollama_model"], "keep_alive": "30m"}
+    payload = {"model": config["ollama_model"],
+               "keep_alive": config.get("ollama_keep_alive", -1)}
     deadline = time.time() + 120
     while time.time() < deadline:
         try:
@@ -544,10 +677,9 @@ def main():
 
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
-    # Last transcript, RAM only, purged after transcript_ttl_seconds.
-    # "armed" = the pill's resend button was clicked during this recording:
-    # on release we re-paste this text instead of transcribing.
-    last_transcript = {"text": None, "at": 0.0, "armed": False}
+    # Last transcript, RAM only, purged after transcript_ttl_seconds so the
+    # pill's resend button can paste it again.
+    last_transcript = {"text": None, "at": 0.0}
     if os.environ.get("DICTEE_LAST_TRANSCRIPT"):  # test hook
         last_transcript.update(text=os.environ["DICTEE_LAST_TRANSCRIPT"],
                                at=time.time())
@@ -556,13 +688,19 @@ def main():
     hotkey = config["hotkey"]
     hotkey_parts = {normalize_key(p.strip()) for p in hotkey.split("+")}
     debug_keys = "--debug-keys" in sys.argv
-    state = {"value": "idle"}  # idle -> recording -> processing -> idle
+    # idle -> recording -> processing (pill shown) | pasting (hidden) -> idle
+    state = {"value": "idle"}
+    # Each start, cancel and resend opens a new session. Background work only
+    # pastes and resets the state if its session is still the current one.
+    session = {"id": 0}
+    lock = threading.RLock()
 
     icons = {
         "idle": make_icon_image("#3B82F6"),        # blue
         "recording": make_icon_image("#EF4444"),   # red
         "processing": make_icon_image("#F59E0B"),  # orange
     }
+    icons["pasting"] = icons["processing"]
     tray = pystray.Icon("dictation", icons["idle"], "Dictée locale")
 
     def set_state(value):
@@ -593,7 +731,15 @@ def main():
         pystray.MenuItem("Quitter", quit_app),
     )
 
-    def process(audio):
+    def is_current(my_id):
+        return session["id"] == my_id
+
+    def finish(my_id):
+        with lock:
+            if is_current(my_id):
+                set_state("idle")
+
+    def process(audio, my_id, live_command=None):
         try:
             duration = len(audio) / config["sample_rate"]
             if duration < MIN_RECORDING_SECONDS:
@@ -602,51 +748,133 @@ def main():
             print(f"[info] Transcribing {duration:.1f}s of audio...")
             text, language = transcribe(model, audio, config["dictionary"],
                                         config["language"])
-            if not text:
+            command = None
+            if config.get("voice_commands", True):
+                text, command = extract_voice_command(text)
+                if live_command and not command:
+                    print("[warn] Voice command heard live but missing from "
+                          "the final transcript; applying it anyway.")
+                command = command or live_command
+                if command:
+                    print(f"[info] Voice command: {command}")
+            if not is_current(my_id):
+                print("[info] Dictation cancelled.")
+                return
+            if not text and command != "send":
                 print("[info] Nothing transcribed, skipping paste.")
                 return
-            print(f"[raw ] {text}")
-            if config["ollama_enabled"]:
-                cleaned = clean_with_ollama(text, config, language)
-                if cleaned:
-                    text = cleaned
-                    print(f"[clean] {text}")
-            paste_text(text, config["paste_delay_ms"])
-            last_transcript.update(text=text, at=time.time())
-            print("[info] Pasted. Hold the hotkey to dictate again.")
+            if text:
+                print(f"[raw ] {text}")
+                if config["ollama_enabled"]:
+                    cleaned = clean_with_ollama(text, config, language)
+                    if cleaned:
+                        text = cleaned
+                        print(f"[clean] {text}")
+                if not is_current(my_id):
+                    print("[info] Dictation cancelled.")
+                    return
+                paste_text(text, config["paste_delay_ms"])
+                last_transcript.update(text=text, at=time.time())
+                print("[info] Pasted.")
+            if command == "send":
+                keyboard.send("enter")
+                print("[info] Sent (Enter).")
         finally:
-            set_state("idle")
+            finish(my_id)
 
-    def resend_last():
+    def start_recording():
+        with lock:
+            if state["value"] != "idle":
+                return
+            session["id"] += 1
+            my_id = session["id"]
+            set_state("recording")
+            try:
+                recorder.start()
+            except sd.PortAudioError as exc:
+                print(f"[error] Could not start recording: {exc}")
+                set_state("idle")
+                return
+        print("[rec ] Recording... release the hotkey to stop.")
+        if config.get("voice_commands", True):
+            threading.Thread(target=watch_voice_commands, args=(my_id,),
+                             daemon=True).start()
+
+    def stop_recording(live_command=None, my_id=None):
+        with lock:
+            if state["value"] != "recording":
+                return
+            if my_id is not None and not is_current(my_id):
+                return
+            my_id = session["id"]
+            set_state("processing")
+            audio = recorder.stop()
+        threading.Thread(target=process, args=(audio, my_id, live_command),
+                         daemon=True).start()
+
+    def cancel():
+        with lock:
+            if state["value"] not in ("recording", "processing"):
+                return
+            if state["value"] == "recording":
+                recorder.stop()
+            session["id"] += 1
+            set_state("idle")
+        print("[info] Dictation cancelled.")
+
+    def resend():
+        with lock:
+            if state["value"] != "recording" or not last_transcript["text"]:
+                return
+            recorder.stop()
+            session["id"] += 1
+            my_id = session["id"]
+            set_state("pasting")
+        threading.Thread(target=paste_last, args=(my_id,), daemon=True).start()
+
+    def paste_last(my_id):
         try:
+            # Clicked while holding the hotkey: wait for the release so no
+            # modifier is still down during Ctrl+V.
+            deadline = time.time() + 10
+            while controller.held and time.time() < deadline:
+                time.sleep(0.02)
             text = last_transcript["text"]
-            if not text:
-                print("[info] No transcript left to resend.")
+            if controller.held or not text or not is_current(my_id):
+                print("[info] Resend skipped.")
                 return
             paste_text(text, config["paste_delay_ms"])
             last_transcript["at"] = time.time()  # resend refreshes the window
             print("[info] Resent last transcript.")
         finally:
-            set_state("idle")
+            finish(my_id)
 
-    def start_recording():
-        set_state("recording")
-        try:
-            recorder.start()
-            print("[rec ] Recording... release the hotkey to stop.")
-        except sd.PortAudioError as exc:
-            print(f"[error] Could not start recording: {exc}")
-            set_state("idle")
-
-    def stop_recording():
-        set_state("processing")
-        audio = recorder.stop()
-        if last_transcript["armed"]:
-            last_transcript["armed"] = False
-            threading.Thread(target=resend_last, daemon=True).start()
-        else:
-            threading.Thread(target=process, args=(audio,),
-                             daemon=True).start()
+    def watch_voice_commands(my_id):
+        last_check = 0.0
+        while True:
+            time.sleep(0.2)
+            if state["value"] != "recording" or not is_current(my_id):
+                return
+            # Push-to-talk reads the command from the final transcript on
+            # release; the live check is only for hands-free dictation.
+            if not controller.hands_free or controller.held:
+                continue
+            if time.monotonic() - last_check < VOICE_CHECK_INTERVAL:
+                continue
+            last_check = time.monotonic()
+            tail = recorder.snapshot(VOICE_TAIL_SECONDS)
+            if len(tail) < 1.5 * config["sample_rate"]:
+                continue
+            try:
+                command = detect_live_voice_command(
+                    model, tail, config["language"], config["sample_rate"])
+            except Exception as exc:
+                print(f"[warn] Voice command check failed: {exc}")
+                return
+            if command:
+                print(f"[info] Voice command heard: {command}")
+                stop_recording(live_command=command, my_id=my_id)
+                return
 
     controller = HotkeyController(
         hotkey_parts,
@@ -654,6 +882,7 @@ def main():
         is_locked=lambda: config.get("hands_free_lock", False),
         start=start_recording,
         stop=stop_recording,
+        is_down=key_physically_down,
     )
 
     def on_key_event(event):
@@ -673,7 +902,8 @@ def main():
     root = tk.Tk()
     root.withdraw()
     Overlay(root, levels, state, quit_event, config, save_config,
-            list_input_devices, on_microphone, last_transcript)
+            list_input_devices, on_microphone, last_transcript,
+            actions={"resend": resend, "cancel": cancel})
     tray.run_detached()
 
     print(f"[info] Ready. Hold '{hotkey}' and speak. "

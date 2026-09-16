@@ -42,11 +42,13 @@ FONT = ("Segoe UI", 9)
 FONT_BOLD = ("Segoe UI", 9, "bold")
 FONT_TINY = ("Segoe UI", 7)
 
-WIDTH, HEIGHT = 400, 60
-RESEND_X = 318     # center of the resend button inside the pill
-RESEND_R = 15
-LOCK_X = 280       # hands-free padlock, left of the resend button
+WIDTH, HEIGHT = 440, 60
+LOCK_X = 280       # hands-free padlock
 LOCK_R = 13
+RESEND_X = 318     # paste the last transcript again
+RESEND_R = 15
+CANCEL_X = 356     # discard the current dictation
+CANCEL_R = 13
 BARS = 30
 BAR_WIDTH = 3
 BAR_GAP = 3
@@ -121,8 +123,10 @@ def draw_language(canvas, mode, cx, cy, small=False):
 
 class Overlay:
     def __init__(self, root, levels, state, quit_event, config, save_config,
-                 devices_provider, on_microphone, last_transcript=None):
-        self.last_transcript = last_transcript  # {"text", "at", "armed"}
+                 devices_provider, on_microphone, last_transcript=None,
+                 actions=None):
+        self.last_transcript = last_transcript  # {"text", "at"}
+        self.actions = actions or {}  # {"resend": fn, "cancel": fn}
         self.levels = levels          # deque of recent mic RMS levels
         self.state = state            # {"value": "idle"|"recording"|"processing"}
         self.quit_event = quit_event
@@ -225,6 +229,7 @@ class Overlay:
 
         self._draw_lock_button(cy)
         self._draw_resend_button(cy)
+        self._draw_cancel_button(cy)
 
         # Current language as flag(s), right side of the pill
         draw_language(self.canvas, self.config.get("language", "mix"),
@@ -235,7 +240,7 @@ class Overlay:
         lt = self.last_transcript
         if not lt or not lt["text"]:
             return 0.0
-        ttl = self.config.get("transcript_ttl_seconds", 15)
+        ttl = self.config.get("transcript_ttl_seconds", 20)
         return max(0.0, lt["at"] + ttl - time.time())
 
     def _draw_lock_button(self, cy):
@@ -263,15 +268,8 @@ class Overlay:
         remaining = self._resend_remaining()
         if remaining <= 0:
             return
-        ttl = self.config.get("transcript_ttl_seconds", 15)
+        ttl = self.config.get("transcript_ttl_seconds", 20)
         x, r = RESEND_X, RESEND_R
-        armed = self.last_transcript["armed"]
-        if armed:
-            self.canvas.create_oval(x - r, cy - r, x + r, cy + r,
-                                    fill=ACCENT, width=0)
-            self.canvas.create_text(x, cy, text="↺", fill="white",
-                                    font=("Segoe UI", 12, "bold"))
-            return
         # Track + countdown ring draining counter-clockwise
         self.canvas.create_oval(x - r, cy - r, x + r, cy + r,
                                 outline=BORDER, width=2, fill=BG_SOFT)
@@ -284,6 +282,15 @@ class Overlay:
         self.canvas.create_text(x, cy + r + 7, text=f"{math.ceil(remaining)}s",
                                 fill=TEXT_DIM, font=FONT_TINY)
 
+    def _draw_cancel_button(self, cy):
+        x, r, d = CANCEL_X, CANCEL_R, 4
+        self.canvas.create_oval(x - r, cy - r, x + r, cy + r,
+                                outline=BORDER, width=2, fill=BG_SOFT)
+        self.canvas.create_line(x - d, cy - d, x + d, cy + d,
+                                fill=DOT_COLOR, width=2)
+        self.canvas.create_line(x - d, cy + d, x + d, cy - d,
+                                fill=DOT_COLOR, width=2)
+
     def on_pill_click(self, event):
         if math.hypot(event.x - LOCK_X, event.y - HEIGHT / 2) <= LOCK_R + 3:
             locked = not self.config.get("hands_free_lock", False)
@@ -291,13 +298,18 @@ class Overlay:
             self.save_config(self.config)
             print(f"[ui  ] hands-free lock {'on' if locked else 'off'}")
             return
-        near_button = math.hypot(event.x - RESEND_X,
-                                 event.y - HEIGHT / 2) <= RESEND_R + 5
-        if (near_button and self._resend_remaining() > 0
+        cy = HEIGHT / 2
+        if (math.hypot(event.x - RESEND_X, event.y - cy) <= RESEND_R + 3
+                and self._resend_remaining() > 0
                 and self.state["value"] == "recording"):
-            armed = not self.last_transcript["armed"]
-            self.last_transcript["armed"] = armed
-            print(f"[ui  ] resend {'armed' if armed else 'disarmed'}")
+            print("[ui  ] resend clicked")
+            self.close_panel()
+            self.actions.get("resend", lambda: None)()
+            return
+        if math.hypot(event.x - CANCEL_X, event.y - cy) <= CANCEL_R + 3:
+            print("[ui  ] cancel clicked")
+            self.close_panel()
+            self.actions.get("cancel", lambda: None)()
             return
         self.toggle_panel()
 
@@ -307,8 +319,8 @@ class Overlay:
             return
         lt = self.last_transcript
         if lt and lt["text"] and self._resend_remaining() <= 0 \
-                and self.state["value"] != "processing":
-            lt.update(text=None, armed=False)  # purge from RAM
+                and self.state["value"] not in ("processing", "pasting"):
+            lt.update(text=None)  # purge from RAM
             print("[info] Last transcript purged from memory.")
         current = self.state["value"]
         # Hotkey released: dictation left "recording" -> close the panel too
