@@ -504,10 +504,40 @@ def transcribe(model, audio, dictionary=(), language="mix"):
 
 # Spoken end-of-dictation commands: "... à demain. Colibri, envoie."
 # "Colibri" sounds like no common word, so ordinary sentences never trigger;
-# only the very last words spoken count. Matching is lenient because the
-# final transcription may spell the command differently ("col", "call").
+# only the very last words spoken count, and repeated commands are all removed
+# ("colibri envoyé, colibri envoyé"). The lists hold every spelling Whisper
+# has produced or plausibly will, accent-free and lower-case; fuzzy matching
+# catches the rest.
 VOICE_WAKE_WORD = "colibri"
-VOICE_SPLIT_SEND = {"voie", "voix", "vois", "voit"}  # "envoie" heard "en voie"
+VOICE_WAKE_WORDS = {
+    "colibri", "colibris", "colibrie", "colibries", "colibry", "colibrit",
+    "colibrix", "collibri", "collibris", "coliberi", "colibre", "colibres",
+    "kolibri", "kolibris", "kollibri", "calibri", "callibri", "calibris",
+    "colibrı", "colibrì",
+}
+VOICE_WAKE_SPLITS = {
+    ("coli", "bri"), ("colis", "bri"), ("colli", "bri"), ("colie", "bri"),
+    ("cali", "bri"), ("kali", "bri"), ("koli", "bri"), ("co", "libri"),
+    ("col", "libri"), ("cole", "libri"), ("colle", "libri"),
+    ("call", "libri"), ("kol", "libri"), ("ko", "libri"), ("cot", "libri"),
+    ("colin", "bri"), ("coli", "brie"), ("coli", "brit"),
+}
+VOICE_PASTE_WORDS = {
+    "colle", "colles", "collent", "coller", "collez", "collee", "collees",
+    "col", "cols", "cole", "coles", "colee", "kol", "kole", "kolle", "call",
+    "calle", "coal", "cool", "colla", "paste", "pasted", "paste",
+}
+VOICE_SEND_WORDS = {
+    "envoie", "envoies", "envoient", "envoi", "envois", "envoit", "envoix",
+    "envoye", "envoyee", "envoyes", "envoyees", "envoyer", "envoyez",
+    "anvoi", "anvoie", "anvoye", "envoyons", "send", "sent", "sends",
+}
+VOICE_SEND_SPLITS = {
+    ("en", "voie"), ("en", "voix"), ("en", "vois"), ("en", "voit"),
+    ("en", "voi"), ("en", "voye"), ("en", "voyer"), ("en", "voyez"),
+    ("an", "voie"), ("an", "voix"), ("en", "vouah"), ("au", "revoir"),
+}
+VOICE_OBJECT_WORDS = {"ca", "le", "la", "les"}  # "colle ça", "envoie-le"
 VOICE_TAIL_SECONDS = 4.0
 VOICE_SILENCE_SECONDS = 0.6  # silence required after the command (live check)
 VOICE_CHECK_INTERVAL = 1.0
@@ -519,21 +549,63 @@ def _plain(word):
 
 
 def _is_wake(word):
-    return SequenceMatcher(None, word, VOICE_WAKE_WORD).ratio() >= 0.75
+    return (word in VOICE_WAKE_WORDS
+            or SequenceMatcher(None, word, VOICE_WAKE_WORD).ratio() >= 0.8)
 
 
 def _verb(word):
-    if _is_wake(word):
+    if not word or _is_wake(word):
         return None
-    if word.startswith(("col", "kol")) or word in ("call", "coal", "paste"):
+    if word in VOICE_PASTE_WORDS:
         return "paste"
-    if word.startswith(("envo", "anvo")) or word == "send":
+    if word in VOICE_SEND_WORDS:
+        return "send"
+    if word.startswith(("coll", "kol")):
+        return "paste"
+    if word.startswith(("envo", "anvo")):
         return "send"
     return None
 
 
+def _wake_start(words, end):
+    """Index where a wake word ending at `end` starts, or None."""
+    if end >= 1 and (words[end - 1], words[end]) in VOICE_WAKE_SPLITS:
+        return end - 1
+    if end >= 0 and _is_wake(words[end]):
+        return end
+    # Unlisted split ("Call Libri"): the first half must itself sound like
+    # the start of the wake word, so a real word before it ("ok") is kept.
+    if (end >= 1 and SequenceMatcher(None, words[end - 1],
+                                     VOICE_WAKE_WORD[:4]).ratio() >= 0.5
+            and _is_wake(words[end - 1] + words[end])):
+        return end - 1
+    return None
+
+
+def _command_at_end(words):
+    """(command, index of its first word) if `words` ends with a command."""
+    n = len(words)
+    for end in (n, n - 1):
+        if end < n and words[n - 1] not in VOICE_OBJECT_WORDS:
+            continue
+        if end >= 2 and (words[end - 2], words[end - 1]) in VOICE_SEND_SPLITS:
+            command, verb_start = "send", end - 2
+        elif end >= 1 and _verb(words[end - 1]):
+            command, verb_start = _verb(words[end - 1]), end - 1
+        else:
+            continue
+        start = _wake_start(words, verb_start - 1)
+        if start is not None:
+            return command, start
+    last = words[-1] if n else ""
+    for size in range(5, 9):  # merged into one token: "colibricol"
+        if len(last) > size and _is_wake(last[:size]) and _verb(last[size:]):
+            return _verb(last[size:]), n - 1
+    return None
+
+
 def extract_voice_command(text, assume_command=None):
-    """Splits a trailing voice command off the transcript.
+    """Splits trailing voice command(s) off the transcript.
 
     Returns (text_without_command, "paste" | "send" | None). When the live
     check already heard a command (`assume_command`), the trailing command
@@ -541,46 +613,25 @@ def extract_voice_command(text, assume_command=None):
     """
     tokens = list(re.finditer(r"\w+", text))
     words = [_plain(t.group()) for t in tokens]
-    n = len(words)
-
-    def wake_start(end):
-        if end < 0:
-            return None
-        single = SequenceMatcher(None, words[end], VOICE_WAKE_WORD).ratio()
-        if single >= 0.9:
-            return end
-        # "Call Libri": the wake word split in two tokens. The first half
-        # must itself sound like the start of the wake word, so a real word
-        # before the command ("ok Kolibri") is kept.
-        if (end >= 1 and SequenceMatcher(
-                None, words[end - 1], VOICE_WAKE_WORD[:4]).ratio() >= 0.5
-                and _is_wake(words[end - 1] + words[end])):
-            return end - 1
-        return end if single >= 0.75 else None
-
-    command = start = None
-    last = words[-1] if n else ""
-    size = len(VOICE_WAKE_WORD)
-    if (len(last) > size and _is_wake(last[:size])
-            and _verb(last[size:])):  # "Colibricol": merged into one token
-        command, start = _verb(last[size:]), n - 1
-    if command is None and n >= 3 and words[-2] == "en" and words[-1] in VOICE_SPLIT_SEND:
-        start = wake_start(n - 3)
-        command = "send" if start is not None else None
-    if command is None and n >= 2 and _verb(words[-1]):
-        start = wake_start(n - 2)
-        command = _verb(words[-1]) if start is not None else None
+    command, cut = None, len(words)
+    while cut:
+        found = _command_at_end(words[:cut])
+        if not found:
+            break
+        command = command or found[0]  # the last command spoken decides
+        cut = found[1]
     if command is None and assume_command:
         command = assume_command
-        start = next((i for i in range(n - 1, max(n - 5, -1), -1)
-                      if _is_wake(words[i])), max(n - 2, 0))
+        n = len(words)
+        cut = next((i for i in range(n - 1, max(n - 5, -1), -1)
+                    if _is_wake(words[i])), max(n - 2, 0))
         print("[warn] Command spelled differently in the final transcript; "
               "trailing words removed.")
     if command is None:
         return text, None
-    if n == 0:
+    if cut == 0:
         return "", command
-    return text[:tokens[start].start()].rstrip(" ,;:-\u2013\u2014\n"), command
+    return text[:tokens[cut].start()].rstrip(" ,;:-\u2013\u2014\n"), command
 
 
 def detect_live_voice_command(model, tail, language, sample_rate):
