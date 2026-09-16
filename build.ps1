@@ -20,7 +20,8 @@ try {
         --collect-all faster_whisper --collect-all ctranslate2 `
         --collect-all onnxruntime `
         --add-data ".venv\Lib\site-packages\nvidia;nvidia" `
-        --add-data "sons/coller.wav;sons" --add-data "sons/envoyer.wav;sons" main.py
+        --add-data "sons/coller.wav;sons" --add-data "sons/envoyer.wav;sons" `
+        --add-data "sons/colibri.wav;sons" main.py
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 
     if (Test-Path "$keep\config.json") {

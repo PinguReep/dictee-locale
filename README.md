@@ -35,7 +35,8 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
   toucher au clavier, ou « Colibri, envoie. » pour coller et appuyer sur
   Entrée.
 - **Sons discrets** : petit clic de bois quand le texte est collé, clic
-  puis courte rafale de vent quand le message est envoyé.
+  puis courte rafale de vent quand le message est envoyé. Un tintement de
+  verre confirme aussitôt que « Colibri » a été compris.
 - **Icône près de l'horloge** : bleue = prête, rouge = enregistrement,
   orange = traitement. Clic droit → langue ou Quitter.
 
@@ -97,6 +98,8 @@ courte pause :
 
 - En **mode mains libres**, la commande est détectée en direct : pas besoin
   de toucher au clavier, pratique avec un casque sans fil.
+- Un tintement de verre confirme tout de suite que la commande est comprise,
+  pratique pour les longs messages dont le traitement prend un moment.
 - En mode maintenu, elle est appliquée quand tu relâches Ctrl+Alt.
 - « Colibri, envoie. » dite seule envoie un message déjà collé.
 - La commande n'est jamais collée dans ton texte et ne compte qu'à la toute
@@ -126,7 +129,7 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
 | `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
-| `sounds` | `true` | Clic au collage, clic + rafale de vent à chaque envoi |
+| `sounds` | `true` | Tintement quand « Colibri » est compris, clic au collage, clic + rafale à chaque envoi |
 | `paste_delay_ms` | `300` | Attente avant de restaurer ton presse-papier |
 | `sample_rate` | `16000` | Ne pas modifier |
 

@@ -100,7 +100,7 @@ DEFAULTS = {
     "hands_free_lock": False,  # pill padlock: tap hotkey to start, tap to send
     "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
-    "sounds": True,  # click on paste, click + wind gust on send
+    "sounds": True,  # ping on "Colibri", click on paste, click + gust on send
 }
 
 LANGUAGE_LABELS = {"fr": "Français", "en": "English", "mix": "Mix FR + EN"}
@@ -968,6 +968,7 @@ def main():
                 return
             if command:
                 print(f"[info] Voice command heard: {command}")
+                play_sound(config, "colibri")  # instant acknowledgement
                 stop_recording(live_command=command, my_id=my_id)
                 return
 
