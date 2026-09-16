@@ -1,0 +1,30 @@
+{
+  "hotkey": "ctrl+alt",
+  "whisper_model": "large-v3-turbo",
+  "whisper_compute_type": "float16",
+  "ollama_enabled": true,
+  "ollama_model": "qwen2.5:7b",
+  "ollama_url": "http://127.0.0.1:11434",
+  "paste_delay_ms": 300,
+  "sample_rate": 16000,
+  "microphone_device": null,
+  "dictionary": [
+    "GitHub",
+    "push",
+    "pull request",
+    "review",
+    "merge",
+    "commit",
+    "deploy",
+    "feature",
+    "backend",
+    "frontend",
+    "Ollama",
+    "Whisper",
+    "paste",
+    "copier-coller"
+  ],
+  "language": "fr",
+  "transcript_ttl_seconds": 15,
+  "hands_free_lock": false
+}
