@@ -8,3 +8,4 @@ __pycache__/
 *.lnk
 .claude/
 sons/propositions/
+.venv-bench/

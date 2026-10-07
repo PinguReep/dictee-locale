@@ -14,7 +14,8 @@ MAX_ROWS = 200
 
 
 def show_history(root, store):
-    records = [r for r in store.records() if r.get("final")][::-1][:MAX_ROWS]
+    records = [r for r in store.records()
+               if r.get("final") and not r.get("calibration")][::-1][:MAX_ROWS]
     win = tk.Toplevel(root)
     win.title("Dictée locale — historique")
     win.configure(bg=BG)

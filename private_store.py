@@ -151,6 +151,14 @@ class PrivateStore:
             self._rewrite(keep)
         return dropped
 
+    def remove(self, record_ids):
+        """Deletes the given records and their audio."""
+        record_ids = set(record_ids)
+        keep = [r for r in self.records() if r.get("id") not in record_ids]
+        for record_id in record_ids:
+            (self.audio_dir / f"{record_id}.bin").unlink(missing_ok=True)
+        self._rewrite(keep)
+
     def clear(self):
         """Deletes the whole history and all audio."""
         with self._lock:

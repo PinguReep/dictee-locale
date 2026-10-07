@@ -225,12 +225,27 @@ jamais le texte dicté).
 ```powershell
 .venv\Scripts\python -m pytest                          # tests
 .venv\Scripts\python tools\eval_cleanup.py qwen2.5:7b   # nettoyage sur phrases de test
-.venv\Scripts\python tools\benchmark.py fw:large-v3-turbo fw:large-v3
+.venv\Scripts\python tools\calibration.py               # séance d'enregistrement (~10 min)
+.venv-bench\Scripts\python tools\benchmark.py          # comparer les moteurs sur ta voix
 ```
 
-`benchmark.py` compare des moteurs sur **tes** dictées validées à la main
-avec audio (`save_audio`), et n'affiche que des scores (taux d'erreur, termes
-du vocabulaire ratés, latence).
+**Banc d'essai sur ta voix** : `calibration.py` te fait lire 40 phrases
+(noms d'IA, franglais, registre familier) et les garde chiffrées comme
+références. `benchmark.py` compare ensuite Whisper turbo et large-v3,
+Parakeet v3, Canary 1B v2 et Qwen3-ASR, et n'affiche que des scores (taux
+d'erreur, termes du vocabulaire ratés, latence). Les dictées validées à la
+main avec audio (`save_audio`) s'ajoutent aux références.
+
+Les moteurs testés vivent dans un environnement séparé pour ne pas alourdir
+l'app :
+
+```powershell
+python -m venv .venv-bench
+.venv-bench\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cu128
+.venv-bench\Scripts\pip install qwen-asr onnx-asr faster-whisper sounddevice keyboard pystray pillow requests numpy
+.venv-bench\Scripts\pip uninstall -y onnxruntime
+.venv-bench\Scripts\pip install onnxruntime-gpu
+```
 
 ## Depuis le code source
 
