@@ -20,6 +20,7 @@ Engines:
 
 import gc
 import statistics
+from collections import Counter
 import sys
 import time
 from pathlib import Path
@@ -54,10 +55,11 @@ def wer(reference, hypothesis):
 
 
 def term_misses(reference, hypothesis, terms):
+    """(terms of the reference missing from the hypothesis, number present)."""
     ref = " " + " ".join(_norm(reference)) + " "
     hyp = " " + " ".join(_norm(hypothesis)) + " "
     present = [t for t in terms if f" {' '.join(_norm(t))} " in ref]
-    return sum(f" {' '.join(_norm(t))} " not in hyp for t in present), len(present)
+    return [t for t in present if f" {' '.join(_norm(t))} " not in hyp], len(present)
 
 
 # -- engines ------------------------------------------------------------------
@@ -132,17 +134,22 @@ def evaluate(spec, samples, audio_of, vocabulary):
     start = time.perf_counter()
     run, handle = ENGINES[kind](name)
     load = time.perf_counter() - start
-    errors = total = missed = present = 0
-    latencies = []
+    errors = fixed_errors = total = present = 0
+    missed, fixed_missed, latencies = [], [], []
+    terms = vocabulary.terms()
     run(*audio_of(samples[0]), vocabulary.hotwords())  # warm-up
     for record in samples:
         audio, rate = audio_of(record)
         start = time.perf_counter()
         hypothesis = run(audio, rate, vocabulary.hotwords())
         latencies.append(time.perf_counter() - start)
+        fixed = vocabulary.apply_rules(hypothesis)[0]  # as the app does next
         e, n = wer(record["final"], hypothesis)
-        m, p = term_misses(record["final"], hypothesis, vocabulary.terms())
-        errors, total, missed, present = errors + e, total + n, missed + m, present + p
+        f, _ = wer(record["final"], fixed)
+        m, p = term_misses(record["final"], hypothesis, terms)
+        fm, _ = term_misses(record["final"], fixed, terms)
+        errors, fixed_errors, total, present = errors + e, fixed_errors + f, total + n, present + p
+        missed, fixed_missed = missed + m, fixed_missed + fm
     del run, handle
     gc.collect()
     try:
@@ -150,7 +157,9 @@ def evaluate(spec, samples, audio_of, vocabulary):
         torch.cuda.empty_cache()
     except ImportError:
         pass
-    return {"engine": spec, "wer": errors / total, "terms": f"{missed}/{present}",
+    return {"engine": spec, "wer": errors / total, "wer_rules": fixed_errors / total,
+            "terms": f"{len(missed)}/{present}",
+            "terms_rules": f"{len(fixed_missed)}/{present}", "missed": fixed_missed,
             "latency": statistics.median(latencies), "load": load}
 
 
@@ -173,15 +182,27 @@ def main(args):
 
     seconds = sum(len(audio_of(r)[0]) / audio_of(r)[1] for r in samples)
     print(f"{len(samples)} enregistrements de référence ({seconds / 60:.1f} min)\n")
-    print(f"{'moteur':42s} {'WER':>6s}  {'termes ratés':>12s}  {'latence':>8s}")
+    print("WER = mots faux ; « + règles » = après les règles de vocabulaire, "
+          "comme dans l'app\n")
+    print(f"{'moteur':36s} {'WER':>6s} {'+règles':>8s}  {'termes ratés':>12s} "
+          f"{'+règles':>8s}  {'latence':>8s}")
+    missed = {}
     for spec in specs:
         try:
             r = evaluate(spec, samples, audio_of, vocabulary)
         except Exception as exc:
-            print(f"{spec:42s} échec : {type(exc).__name__}: {str(exc)[:80]}")
+            print(f"{spec:36s} échec : {type(exc).__name__}: {str(exc)[:80]}")
             continue
-        print(f"{r['engine']:42s} {r['wer']:6.1%}  {r['terms']:>12s}  "
-              f"{r['latency']:7.2f}s")
+        missed[spec] = r["missed"]
+        print(f"{r['engine']:36s} {r['wer']:6.1%} {r['wer_rules']:8.1%}  "
+              f"{r['terms']:>12s} {r['terms_rules']:>8s}  {r['latency']:7.2f}s",
+              flush=True)
+    if not with_dictations:  # names from the vocabulary, read from fixed sentences
+        print("\nTermes encore ratés après les règles :")
+        for spec, terms in missed.items():
+            counts = Counter(terms).most_common()
+            print(f"  {spec} : " + (", ".join(f"{t} ×{n}" if n > 1 else t
+                                              for t, n in counts) or "aucun"))
 
 
 if __name__ == "__main__":
