@@ -34,6 +34,18 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
 - **Commandes vocales** : termine par « Colibri, colle. » pour coller sans
   toucher au clavier, ou « Colibri, envoie. » pour coller et appuyer sur
   Entrée.
+- **Nettoyage fidèle** : le texte garde tes mots et ton registre (« t'as »,
+  « ouais », « du coup »). Le modèle ne peut que retirer les hésitations,
+  ponctuer et écrire correctement tes termes ; toute autre réécriture est
+  annulée automatiquement.
+- **Vocabulaire qui apprend** : noms de modèles d'IA, produits, prénoms…
+  Whisper est orienté vers les bonnes orthographes et les erreurs récurrentes
+  (« cloud » → « Claude » quand on parle d'IA) sont corrigées.
+- **Relecture (mode apprentissage)** : une boîte montre le texte avant collage,
+  avec les changements surlignés. Tes corrections enseignent le vocabulaire.
+- **Confidentialité** : historique chiffré sur ton PC, texte dicté exclu de
+  l'historique Win+V et de la synchro cloud du presse-papier, ton contenu
+  copié (images, fichiers…) restauré après chaque collage.
 - **Sons discrets** : petit clic de bois quand le texte est collé, clic
   puis courte rafale de vent quand le message est envoyé. Un tintement de
   verre confirme aussitôt que « Colibri » a été compris.
@@ -86,6 +98,27 @@ L'enregistrement continue ; change de fenêtre, place ton curseur, puis appuie
 et relâche Ctrl+Alt pour envoyer. Taper `@`, `#` ou `€` (AltGr) pendant la
 dictée ne l'interrompt pas.
 
+## Phase d'apprentissage
+
+Active **Relecture avant collage** (clic droit sur l'icône). Après chaque
+dictée, une boîte s'affiche au-dessus de la pilule :
+
+- les mots changés par le vocabulaire ou le nettoyage sont **en bleu** : un
+  clic remet ce que Whisper avait entendu ; les mots retirés sont listés ;
+- sans action, le texte est collé au bout de 4 s
+  (`review_timeout_seconds`, `0` = attendre) ;
+- survole la boîte pour arrêter le compte à rebours, clique dedans pour
+  corriger au clavier, puis **Entrée** (ou le bouton, ou Ctrl+Alt) pour
+  coller, **Échap** ou **Annuler** pour jeter ;
+- chaque correction est retenue : une même correction vue deux fois devient
+  une règle permanente, et les noms propres rejoignent le vocabulaire.
+
+Le vocabulaire est dans `%LOCALAPPDATA%\DicteeLocale\vocabulaire.json`
+(modifiable à la main). Avec `spark_url` (un serveur compatible OpenAI sur ton
+réseau local, comme des DGX Spark), un modèle analyse une fois par jour tes
+corrections et propose des règles générales ; seuls les mots corrigés et
+quelques mots de contexte lui sont envoyés, et jamais hors du réseau local.
+
 ## Commandes vocales
 
 Termine ta dictée par l'une de ces phrases, **en dernier**, puis marque une
@@ -130,13 +163,35 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
 | `sounds` | `true` | Tintement quand « Colibri » est compris, clic au collage, clic + rafale à chaque envoi |
+| `review_mode` | `false` | Boîte de relecture avant collage (phase d'apprentissage) |
+| `review_timeout_seconds` | `4` | Collage automatique d'une boîte non touchée (`0` = attendre) |
+| `save_history` | `true` | Historique chiffré (nécessaire pour apprendre) |
+| `save_audio` | `false` | Garder aussi l'audio, chiffré (banc d'essai, fine-tuning) |
+| `history_retention_days` | `30` | Durée de conservation de l'historique |
+| `spark_url` | `null` | Serveur LLM du réseau local pour analyser tes corrections |
+| `microphone_name` | `null` | Micro choisi, retrouvé par son nom même si les périphériques USB changent |
 | `paste_delay_ms` | `300` | Attente avant de restaurer ton presse-papier |
 | `sample_rate` | `16000` | Ne pas modifier |
 
+## Confidentialité
+
+- **Rien ne sort de ton PC.** Seule exception volontaire : l'analyse des
+  corrections, qui va vers `spark_url`, refusé s'il n'est pas sur le réseau
+  local.
+- **Historique chiffré** avec la protection Windows (DPAPI) dans
+  `%LOCALAPPDATA%\DicteeLocale\prive` : seul ton compte Windows sur ce PC
+  peut le lire. Consultation : clic droit sur l'icône → **Historique…**
+  (double-clic pour copier). **Effacer l'historique…** supprime tout.
+- **Le journal `dictation.log` ne contient plus aucun texte dicté** :
+  seulement les étapes, les durées et le nombre de mots. L'ancien journal est
+  migré automatiquement dans l'historique chiffré au premier lancement.
+- **Presse-papier** : le texte dicté n'entre ni dans l'historique Win+V ni
+  dans la synchronisation cloud, et ce que tu avais copié est remis tel quel.
+
 ## Dépannage
 
-Un fichier `dictation.log` à côté de l'exe détaille ce qui se passe. Il
-contient aussi le texte dicté : ne le partage pas.
+Un fichier `dictation.log` à côté de l'exe détaille ce qui se passe (sans
+jamais le texte dicté).
 
 **Rien ne se passe avec Ctrl+Alt**
 - L'icône bleue est-elle affichée près de l'horloge ? Sinon l'app charge
@@ -164,6 +219,18 @@ contient aussi le texte dicté : ne le partage pas.
 
 **Mauvais micro**
 - Clique sur la pilule pendant la dictée et choisis le bon micro.
+
+## Outils
+
+```powershell
+.venv\Scripts\python -m pytest                          # tests
+.venv\Scripts\python tools\eval_cleanup.py qwen2.5:7b   # nettoyage sur phrases de test
+.venv\Scripts\python tools\benchmark.py fw:large-v3-turbo fw:large-v3
+```
+
+`benchmark.py` compare des moteurs sur **tes** dictées validées à la main
+avec audio (`save_audio`), et n'affiche que des scores (taux d'erreur, termes
+du vocabulaire ratés, latence).
 
 ## Depuis le code source
 

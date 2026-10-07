@@ -22,7 +22,6 @@ from pathlib import Path
 
 import keyboard
 import numpy as np
-import pyperclip
 import pystray
 import requests
 import sounddevice as sd
@@ -35,7 +34,14 @@ from faster_whisper import WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from PIL import Image, ImageDraw
 
+import clipboard_win
+import fidelity
+import spark_learning
+from history_window import show_history
 from overlay import Overlay
+from private_store import PrivateStore, migrate_plain_log
+from review_box import ReviewBox
+from vocab import Vocabulary
 
 # When frozen by PyInstaller, config/logs live next to the .exe.
 if getattr(sys, "frozen", False):
@@ -101,6 +107,15 @@ DEFAULTS = {
     "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
     "sounds": True,  # ping on "Colibri", click on paste, click + gust on send
+    "microphone_name": None,  # preferred over the index, which changes with USB
+    "review_mode": False,  # learning phase: review box before pasting
+    "review_timeout_seconds": 4,  # an untouched box pastes after this (0 = wait)
+    "save_history": True,  # encrypted local history, needed to learn
+    "save_audio": False,  # also keep the audio (benchmarks, fine-tuning)
+    "history_retention_days": 30,
+    "spark_url": None,  # LAN OpenAI-compatible endpoint for learning analysis
+    "spark_model": None,  # None = first model the endpoint serves
+    "spark_auto": True,  # analyse new corrections once a day when idle
 }
 
 LANGUAGE_LABELS = {"fr": "Français", "en": "English", "mix": "Mix FR + EN"}
@@ -136,41 +151,6 @@ def key_physically_down(name):
         return True
     return any(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000
                for vk in codes)
-
-CLEANUP_SYSTEM_PROMPT = """You clean up raw speech-to-text transcripts.
-
-Rules:
-- Remove filler words (um, uh, like, you know, euh, ben, bah, genre, du coup,
-tu vois, quoi, attends, bref, en fait) when they carry no meaning.
-- Remove stutters, repeated words and false starts: keep only the completed
-thought ("je je voulais", "on... on devrait" -> "je voulais", "on devrait").
-- Add proper punctuation and capitalization.
-- Preserve the original meaning and wording. Never summarize, expand, or answer \
-questions contained in the text.
-- Apply self-corrections: if the speaker corrects themselves ("send it Monday, \
-no wait, Tuesday" / "lundi, non plutot mardi"), keep only the corrected version.
-- NEVER translate. The output must be in the exact same language as the input. \
-Do not change times, dates, numbers, or names beyond fixing punctuation.
-- In French text, keep English technical terms (anglicisms) exactly as spoken: \
-"push", "deploy", "pull request", "feature" must NOT be turned into French words.
-- Output ONLY the final cleaned text. No commentary, no quotes, no explanations."""
-
-# Few-shot examples: small local models follow the rules far more reliably
-# with one demonstration per language than with instructions alone.
-CLEANUP_EXAMPLES = [
-    ("hello um so I'll send the report on uh Monday no wait Tuesday morning",
-     "Hello, I'll send the report on Tuesday morning."),
-    ("bonjour euh du coup on se voit lundi non plutot mardi a quinze heures",
-     "Bonjour, on se voit mardi à quinze heures."),
-    # Franglais: anglicisms must survive the cleanup untouched.
-    ("euh j'ai push le fix sur la branche main tu peux review avant le deploy",
-     "J'ai push le fix sur la branche main, tu peux review avant le deploy."),
-    # Stutters, false starts and fillers all collapse into the clean thought.
-    ("attends euh je je voulais dire qu'on qu'on devrait genre partir "
-     "plus tot quoi",
-     "Je voulais dire qu'on devrait partir plus tôt."),
-]
-
 
 def load_config():
     config = dict(DEFAULTS)
@@ -450,29 +430,34 @@ def speech_seconds(audio, sample_rate=16000):
     return sum(s["end"] - s["start"] for s in stamps) / sample_rate
 
 
-def join_segments(segments):
+def join_segments(segments, hotwords=None):
+    hot = set(re.findall(r"[\w'’-]+", hotwords.lower())) if hotwords else set()
     kept = []
     for segment in segments:
         text = segment.text.strip()
         lowered = text.lower().replace("’", "'")
         if (len(text.split()) <= HALLUCINATION_MAX_WORDS
                 and any(p in lowered for p in HALLUCINATION_PATTERNS)):
-            print(f"[info] Dropped hallucinated segment: {text!r}")
+            print("[info] Dropped a hallucinated sign-off segment.")
+            continue
+        # On silence Whisper may read the hotword list back: drop such echoes.
+        seg_words = re.findall(r"[\w'’-]+", lowered)
+        if (hot and len(seg_words) >= 3
+                and sum(w in hot for w in seg_words) >= 0.8 * len(seg_words)):
+            print("[info] Dropped a segment echoing the vocabulary list.")
             continue
         kept.append(text)
     return " ".join(kept).strip()
 
 
-def transcribe(model, audio, dictionary=(), language="mix"):
-    # initial_prompt biases Whisper toward these spellings — this is how
-    # personal-dictionary terms (names, tech jargon) survive transcription.
-    initial_prompt = ", ".join(dictionary) if dictionary else None
+def transcribe(model, audio, hotwords=None, language="mix"):
+    # hotwords bias every 30 s window toward the vocabulary's spellings;
+    # initial_prompt only reached the first window of long dictations.
     forced = language if language in ("fr", "en") else None
     segments, info = model.transcribe(
-        audio, language=forced, initial_prompt=initial_prompt,
-        **WHISPER_OPTIONS
+        audio, language=forced, hotwords=hotwords, **WHISPER_OPTIONS
     )
-    text = join_segments(segments)
+    text = join_segments(segments, hotwords)
     if forced is None and text and info.language not in ("fr", "en"):
         # Mix mode: short clips get misdetected (e.g. Japanese). Constrain the
         # choice to fr/en using the detection probabilities and redo the pass.
@@ -481,10 +466,9 @@ def transcribe(model, audio, dictionary=(), language="mix"):
         print(f"[info] Detected '{info.language}', constraining to '{best}' "
               f"(mix mode).")
         segments, info = model.transcribe(
-            audio, language=best, initial_prompt=initial_prompt,
-            **WHISPER_OPTIONS
+            audio, language=best, hotwords=hotwords, **WHISPER_OPTIONS
         )
-        text = join_segments(segments)
+        text = join_segments(segments, hotwords)
     speech = speech_seconds(audio) if len(audio) > 3 * 16000 else 0.0
     if speech >= 2.0 and len(text.split()) < speech * MIN_WORDS_PER_SPEECH_SECOND:
         segments, _ = model.transcribe(
@@ -655,26 +639,19 @@ def detect_live_voice_command(model, tail, language, sample_rate):
     return command
 
 
-def clean_with_ollama(text, config, language=None):
-    """Returns the cleaned transcript, or None if Ollama failed."""
+def clean_with_ollama(text, config, language=None, terms=()):
+    """Faithful cleanup (see fidelity.py). Returns (text, refused edits), or
+    None if Ollama failed."""
     url = config["ollama_url"].rstrip("/") + "/api/chat"
-    system = CLEANUP_SYSTEM_PROMPT
-    if language in ("fr", "en"):
-        lang_name = "French" if language == "fr" else "English"
-        system += (f"\n\nThe transcript below is in {lang_name}. "
-                   f"Your output MUST be in {lang_name}.")
-    messages = [{"role": "system", "content": system}]
-    for raw, cleaned in CLEANUP_EXAMPLES:
-        messages.append({"role": "user", "content": raw})
-        messages.append({"role": "assistant", "content": cleaned})
-    messages.append({"role": "user", "content": text})
     payload = {
         "model": config["ollama_model"],
-        "messages": messages,
+        "messages": fidelity.build_messages(text, terms, language),
         "stream": False,
         "keep_alive": config.get("ollama_keep_alive", -1),
         "options": {"temperature": 0},
     }
+    if config["ollama_model"].startswith("qwen3"):
+        payload["think"] = False
     # A slow or stuck Ollama must never freeze dictation: fall back to the
     # raw transcript after a short wait that grows with the text length.
     timeout = 10 + len(text.split()) / 20
@@ -688,7 +665,9 @@ def clean_with_ollama(text, config, language=None):
     # Models sometimes wrap their answer in quotes despite instructions.
     if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in "\"'":
         cleaned = cleaned[1:-1].strip()
-    return cleaned or None
+    if not cleaned:
+        return None
+    return fidelity.constrain(text, cleaned, terms)
 
 
 def play_sound(config, name):
@@ -703,21 +682,25 @@ def play_sound(config, name):
 
 
 def paste_text(text, paste_delay_ms, on_pasted=None):
+    """Pastes through the clipboard. The text is kept out of the Win+V
+    history and cloud sync, and the previous clipboard comes back in every
+    format (images, files...), not just text."""
     try:
-        previous_clipboard = pyperclip.paste()
-    except pyperclip.PyperclipException:
-        previous_clipboard = None
-    pyperclip.copy(text)
-    time.sleep(0.15)  # let the clipboard settle before pasting
+        saved = clipboard_win.snapshot()
+    except OSError as exc:
+        print(f"[warn] Could not save the clipboard ({exc}).")
+        saved = None
+    clipboard_win.set_private_text(text)
+    time.sleep(0.05)
     keyboard.send("ctrl+v")
     if on_pasted:
         on_pasted()
     time.sleep(paste_delay_ms / 1000)
-    if previous_clipboard is not None:
+    if saved is not None:
         try:
-            pyperclip.copy(previous_clipboard)
-        except pyperclip.PyperclipException:
-            pass
+            clipboard_win.restore(saved)
+        except OSError as exc:
+            print(f"[warn] Could not restore the clipboard ({exc}).")
 
 
 def list_input_devices():
@@ -747,13 +730,34 @@ def list_input_devices():
     return result
 
 
-def check_microphone(config):
+def resolve_microphone(config):
+    """Device index of the chosen mic, found by name first (indices change
+    when USB devices come and go), or None for the system default."""
+    name = config.get("microphone_name")
+    if name:
+        for index, device_name in list_input_devices():
+            if device_name == name:
+                return index
+        print(f"[warn] Microphone '{name}' not found, using the default one.")
+        return None
+    index = config.get("microphone_device")
+    if index is None:
+        return None
     try:
-        device = sd.query_devices(config["microphone_device"], kind="input")
+        sd.query_devices(index, kind="input")
+        return index
+    except (sd.PortAudioError, ValueError):
+        return None
+
+
+def check_microphone(config):
+    """Logs the mic in use. A missing mic (wireless headset still off at
+    login) is not fatal: recording retries when the hotkey is pressed."""
+    try:
+        device = sd.query_devices(resolve_microphone(config), kind="input")
         print(f"[info] Microphone: {device['name']}")
     except (sd.PortAudioError, ValueError) as exc:
-        print(f"[error] No usable microphone found: {exc}")
-        sys.exit(1)
+        print(f"[warn] No microphone yet ({exc}); will retry when recording.")
 
 
 def warm_up_ollama(config):
@@ -800,10 +804,35 @@ def check_ollama(config):
         print(f"[info] Ollama ready with model '{wanted}'.")
 
 
+def open_private_store(config):
+    """Encrypted history; the old plain-text log is migrated into it once.
+    Runs before the log file is opened, so it can be rewritten."""
+    if not config.get("save_history", True):
+        return None, []
+    notes = []
+    try:
+        store = PrivateStore(retention_days=config.get("history_retention_days", 30))
+        moved = migrate_plain_log(APP_DIR / "dictation.log", store)
+        if moved:
+            notes.append(f"[info] Moved {moved} dictations from the log into "
+                         f"the encrypted history.")
+        dropped = store.purge_old()
+        if dropped:
+            notes.append(f"[info] Deleted {dropped} dictations older than "
+                         f"{store.retention_days} days.")
+        return store, notes
+    except OSError as exc:
+        return None, [f"[warn] Private history unavailable ({exc})."]
+
+
 def main():
-    setup_frozen_logging()
-    ensure_single_instance()
+    ensure_single_instance()  # before touching the log or the history
     config = load_config()
+    store, notes = open_private_store(config)
+    setup_frozen_logging()
+    for note in notes:
+        print(note)
+    vocabulary = Vocabulary(extra_terms=config.get("dictionary", []))
     check_microphone(config)
     check_ollama(config)
     if config["ollama_enabled"]:
@@ -823,29 +852,36 @@ def main():
     if os.environ.get("DICTEE_LAST_TRANSCRIPT"):  # test hook
         last_transcript.update(text=os.environ["DICTEE_LAST_TRANSCRIPT"],
                                at=time.time())
-    recorder = Recorder(config["sample_rate"], config["microphone_device"],
+    recorder = Recorder(config["sample_rate"], resolve_microphone(config),
                         levels)
     hotkey = config["hotkey"]
     hotkey_parts = {normalize_key(p.strip()) for p in hotkey.split("+")}
     debug_keys = "--debug-keys" in sys.argv
-    # idle -> recording -> processing (pill shown) | pasting (hidden) -> idle
+    # idle -> recording -> processing (pill shown) -> [review (box shown)]
+    # -> idle;  pasting (hidden) is the resend path.
     state = {"value": "idle"}
     # Each start, cancel and resend opens a new session. Background work only
     # pastes and resets the state if its session is still the current one.
     session = {"id": 0}
     lock = threading.RLock()
+    ui = {"root": None, "review": None}
+    spark = {"busy": False}
 
     icons = {
         "idle": make_icon_image("#3B82F6"),        # blue
         "recording": make_icon_image("#EF4444"),   # red
         "processing": make_icon_image("#F59E0B"),  # orange
     }
-    icons["pasting"] = icons["processing"]
+    icons["pasting"] = icons["review"] = icons["processing"]
     tray = pystray.Icon("dictation", icons["idle"], "Dictée locale")
 
     def set_state(value):
         state["value"] = value
         tray.icon = icons[value]
+
+    def on_tk(function):
+        if ui["root"] is not None:
+            ui["root"].after(0, function)
 
     def set_language(mode):
         def handler(icon, item):
@@ -853,6 +889,56 @@ def main():
             save_config(config)
             print(f"[info] Langue: {LANGUAGE_LABELS[mode]}")
         return handler
+
+    def toggle_review(icon, item):
+        config["review_mode"] = not config.get("review_mode", False)
+        save_config(config)
+        print(f"[info] Review box {'on' if config['review_mode'] else 'off'}.")
+
+    def open_history(icon, item):
+        if store is not None:
+            on_tk(lambda: show_history(ui["root"], store))
+
+    def clear_history(icon, item):
+        def ask():
+            from tkinter import messagebox
+            if messagebox.askyesno(
+                    "Dictée locale",
+                    "Effacer tout l'historique chiffré (textes et audio) ?\n"
+                    "C'est définitif.", parent=ui["root"]):
+                store.clear()
+                print("[info] Private history cleared by the user.")
+        if store is not None:
+            on_tk(ask)
+
+    def run_spark(icon=None, item=None):
+        if spark["busy"] or store is None or not config.get("spark_url"):
+            return
+        spark["busy"] = True
+
+        def work():
+            try:
+                added = spark_learning.analyse(store, vocabulary,
+                                               config["spark_url"],
+                                               config.get("spark_model"))
+                vocabulary.data["spark_last"] = time.time()
+                vocabulary.save()
+                print(f"[info] Spark analysis: {added} rule proposal(s).")
+            except Exception as exc:
+                print(f"[warn] Spark analysis failed ({exc}).")
+            finally:
+                spark["busy"] = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def spark_scheduler():
+        """Once a day, when idle and there are new corrections to learn from."""
+        while not quit_event.wait(1800):
+            if not (config.get("spark_auto", True) and config.get("spark_url")):
+                continue
+            if time.time() - vocabulary.data.get("spark_last", 0) < 20 * 3600:
+                continue
+            if state["value"] == "idle":
+                run_spark()
 
     def quit_app(icon, item):
         keyboard.unhook_all()
@@ -868,6 +954,15 @@ def main():
             checked=(lambda m: lambda item: config["language"] == m)(mode))
           for mode in ("fr", "en", "mix")),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Relecture avant collage", toggle_review,
+                         checked=lambda item: config.get("review_mode", False)),
+        pystray.MenuItem("Historique…", open_history,
+                         enabled=lambda item: store is not None),
+        pystray.MenuItem("Analyser mes corrections (Spark)", run_spark,
+                         enabled=lambda item: bool(config.get("spark_url"))),
+        pystray.MenuItem("Effacer l'historique…", clear_history,
+                         enabled=lambda item: store is not None),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Quitter", quit_app),
     )
 
@@ -879,6 +974,39 @@ def main():
             if is_current(my_id):
                 set_state("idle")
 
+    def wait_hotkey_release(limit=10.0):
+        """No modifier may still be down when Ctrl+V is sent."""
+        deadline = time.time() + limit
+        while controller.held and time.time() < deadline:
+            time.sleep(0.02)
+        return not controller.held
+
+    def ask_review(heard, proposed, send):
+        """Shows the review box and waits: (text, how) or (None, "cancel")."""
+        done, result = threading.Event(), {}
+
+        def on_done(text, how):
+            result.update(text=text, how=how)
+            done.set()
+        on_tk(lambda: ui["review"].show(
+            heard, proposed, on_done,
+            timeout=config.get("review_timeout_seconds", 4), send=send))
+        done.wait()
+        return result["text"], result["how"]
+
+    def remember(record, audio):
+        """Learns from the user's edits and stores the dictation encrypted."""
+        if record.get("edited"):
+            learned = vocabulary.learn(record["proposed"], record["final"])
+            if learned:
+                print(f"[info] Learned {len(learned)} correction(s).")
+        if store is not None:
+            try:
+                store.add(record, audio if config.get("save_audio") else None,
+                          config["sample_rate"])
+            except OSError as exc:
+                print(f"[warn] Could not save to the private history ({exc}).")
+
     def process(audio, my_id, live_command=None):
         try:
             duration = len(audio) / config["sample_rate"]
@@ -886,7 +1014,7 @@ def main():
                 print("[info] Recording too short, ignoring.")
                 return
             print(f"[info] Transcribing {duration:.1f}s of audio...")
-            text, language = transcribe(model, audio, config["dictionary"],
+            text, language = transcribe(model, audio, vocabulary.hotwords(),
                                         config["language"])
             command = None
             if config.get("voice_commands", True):
@@ -894,8 +1022,7 @@ def main():
                     text, assume_command=live_command)
                 last_words = re.findall(r"\w+", text)[-3:]
                 if not command and any(_is_wake(_plain(w)) for w in last_words):
-                    print("[warn] Wake word heard but no command understood: "
-                          f"{' '.join(last_words)!r}")
+                    print("[warn] Wake word heard but no command understood.")
                 if command:
                     print(f"[info] Voice command: {command}")
             if not is_current(my_id):
@@ -905,25 +1032,54 @@ def main():
                 print("[info] Nothing transcribed, skipping paste.")
                 return
             if text:
-                print(f"[raw ] {text}")
+                heard = text
+                print(f"[raw ] {len(heard.split())} words")
+                text, fixes = vocabulary.apply_rules(text)
+                if fixes:
+                    print(f"[info] Vocabulary fixed {fixes} word(s).")
+                proposed = text
                 if config["ollama_enabled"]:
-                    cleaned = clean_with_ollama(text, config, language)
-                    if cleaned:
-                        text = cleaned
-                        print(f"[clean] {text}")
+                    result = clean_with_ollama(text, config, language,
+                                               vocabulary.terms())
+                    if result:
+                        proposed, refused = result
+                        print(f"[clean] {len(proposed.split())} words"
+                              + (f", {refused} rewrite(s) refused" if refused else ""))
                 if not is_current(my_id):
                     print("[info] Dictation cancelled.")
                     return
+                final, how = proposed, None
+                if config.get("review_mode", False):
+                    with lock:
+                        if not is_current(my_id):
+                            return
+                        set_state("review")
+                    final, how = ask_review(heard, proposed, command == "send")
+                    if final is None or not is_current(my_id):
+                        print("[info] Dictation cancelled in review.")
+                        return
+                    print(f"[info] Review: validated ({how})"
+                          + (", edited." if final != proposed else "."))
+                wait_hotkey_release()
                 # On send, the send sound (click + gust) replaces the click.
-                paste_text(text, config["paste_delay_ms"],
+                paste_text(final, config["paste_delay_ms"],
                            on_pasted=None if command == "send"
                            else lambda: play_sound(config, "coller"))
-                last_transcript.update(text=text, at=time.time())
+                last_transcript.update(text=final, at=time.time())
                 print("[info] Pasted.")
+                remember({"heard": heard, "proposed": proposed, "final": final,
+                          "language": language, "duration": round(duration, 1),
+                          "command": command, "validated_by": how,
+                          "edited": how is not None and final != proposed,
+                          "asr": config["whisper_model"],
+                          "cleanup": config["ollama_model"]
+                          if config["ollama_enabled"] else None}, audio)
             if command == "send":
                 keyboard.send("enter")
                 play_sound(config, "envoyer")
                 print("[info] Sent (Enter).")
+        except Exception as exc:
+            print(f"[error] Dictation failed: {type(exc).__name__}: {exc}")
         finally:
             finish(my_id)
 
@@ -934,12 +1090,23 @@ def main():
             session["id"] += 1
             my_id = session["id"]
             set_state("recording")
+            recorder.device = resolve_microphone(config)
             try:
                 recorder.start()
             except sd.PortAudioError as exc:
-                print(f"[error] Could not start recording: {exc}")
-                set_state("idle")
-                return
+                if recorder.device is None:
+                    print(f"[error] Could not start recording: {exc}")
+                    set_state("idle")
+                    return
+                print(f"[warn] Chosen microphone failed ({exc}), "
+                      f"using the default one.")
+                recorder.device = None
+                try:
+                    recorder.start()
+                except sd.PortAudioError as exc2:
+                    print(f"[error] Could not start recording: {exc2}")
+                    set_state("idle")
+                    return
         print("[rec ] Recording... release the hotkey to stop.")
         if config.get("voice_commands", True):
             threading.Thread(target=watch_voice_commands, args=(my_id,),
@@ -981,11 +1148,9 @@ def main():
         try:
             # Clicked while holding the hotkey: wait for the release so no
             # modifier is still down during Ctrl+V.
-            deadline = time.time() + 10
-            while controller.held and time.time() < deadline:
-                time.sleep(0.02)
+            released = wait_hotkey_release()
             text = last_transcript["text"]
-            if controller.held or not text or not is_current(my_id):
+            if not released or not text or not is_current(my_id):
                 print("[info] Resend skipped.")
                 return
             paste_text(text, config["paste_delay_ms"],
@@ -1036,6 +1201,10 @@ def main():
         if not event.name:
             return
         controller.handle(event.name, event.event_type == keyboard.KEY_DOWN)
+        # The hotkey validates an open review box (the paste then waits for
+        # the hotkey to be released).
+        if state["value"] == "review" and controller.held and ui["review"]:
+            on_tk(ui["review"].validate)
         if debug_keys:
             print(f"[keys] {event.event_type:<4} {event.name!r:<16} "
                   f"held={sorted(controller.pressed)}")
@@ -1043,15 +1212,21 @@ def main():
     keyboard.hook(on_key_event)
 
     def on_microphone(index):
+        names = dict(list_input_devices())
+        config["microphone_name"] = names.get(index) if index is not None else None
+        save_config(config)
         recorder.switch_device(index)  # applies immediately, even mid-recording
 
     # tkinter owns the main thread (overlay); the tray icon runs detached.
     root = tk.Tk()
     root.withdraw()
+    ui["root"] = root
+    ui["review"] = ReviewBox(root)
     Overlay(root, levels, state, quit_event, config, save_config,
             list_input_devices, on_microphone, last_transcript,
             actions={"resend": resend, "cancel": cancel})
     tray.run_detached()
+    threading.Thread(target=spark_scheduler, daemon=True).start()
 
     print(f"[info] Ready. Hold '{hotkey}' and speak. "
           f"Quit from the tray icon (or Ctrl+C here).")
