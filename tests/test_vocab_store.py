@@ -66,3 +66,29 @@ def test_migrate_plain_log(tmp_path):
     assert "bonjour" not in content.lower() and "Transcribing" in content
     assert store.records()[0]["final"] == "Bonjour."
     assert migrate_plain_log(log, store) == 0  # idempotent
+
+
+def test_migrate_multiline_dictations(tmp_path):
+    log = tmp_path / "dictation.log"
+    log.write_text("09:00:00 --- started 2026-09-16 09:00:00 ---\n"
+                   "09:00:05 [raw ] premier paragraphe\n"
+                   "09:00:05 deuxième paragraphe\n"
+                   "09:00:06 [clean] Premier paragraphe.\n"
+                   "09:00:06 Deuxième paragraphe.\n"
+                   "09:00:06 [info] Pasted.\n"
+                   "09:01:00 [warn] Ollama unreachable\n"
+                   "09:01:00 Traceback (most recent call last):\n"
+                   # left behind by the first version of the migration:
+                   "09:02:00 [clean] 3 words (moved to private history)\n"
+                   "09:02:00 reste oublié\n"
+                   "09:02:01 [clean] 5 words, 1 rewrite(s) refused\n", encoding="utf-8")
+    store = PrivateStore(tmp_path / "prive")
+    assert migrate_plain_log(log, store) == 2
+    content = log.read_text(encoding="utf-8")
+    assert "paragraphe" not in content and "oublié" not in content
+    assert "Traceback" in content and "--- started" in content
+    assert "[raw ] 4 words (moved" in content and "5 words, 1 rewrite" in content
+    finals = [r["final"] for r in store.records()]
+    assert finals == ["Premier paragraphe.\nDeuxième paragraphe.", "reste oublié"]
+    assert store.records()[0]["raw"] == "premier paragraphe\ndeuxième paragraphe"
+    assert migrate_plain_log(log, store) == 0

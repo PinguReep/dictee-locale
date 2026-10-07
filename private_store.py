@@ -178,41 +178,67 @@ class PrivateStore:
 
 
 _TEXT_LINE = re.compile(r"^(?P<time>\d\d:\d\d:\d\d )?\[(?P<kind>raw |clean)\] (?P<text>.*)$")
+_STATUS_LINE = re.compile(r"^(\d\d:\d\d:\d\d )?(\[[a-z ]{2,8}\]|---)")
+_COUNT = re.compile(r"\d+ (words|mots)(, \d+ rewrite\(s\) refused"
+                    r"| \(moved to private history\))?")
+_TIME = re.compile(r"^\d\d:\d\d:\d\d ")
 
 
 def migrate_plain_log(log_path, store):
     """Moves dictated text found in the old plain-text log into the encrypted
     store, then rewrites the log without it. Returns the number of entries
-    moved. Status lines (times, durations, warnings) stay in the log."""
+    moved. Status lines (times, durations, warnings) stay in the log.
+
+    A dictation with line breaks was logged on several lines: the unlabelled
+    lines right after a [raw ]/[clean] line belong to it, even when that
+    first line was already moved by an earlier version of this function."""
     log_path = Path(log_path)
     if not log_path.exists():
         return 0
     lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    if not any(_TEXT_LINE.match(line) and not re.search(r"\] \d+ (words|mots)", line)
-               for line in lines):
-        return 0
-    kept, moved, pending_raw = [], 0, None
+    kept, entries, owner = [], [], None  # entry: [kind or None, time, lines]
     for line in lines:
         match = _TEXT_LINE.match(line)
-        if not match or re.fullmatch(r"\d+ (words|mots).*", match["text"]):
+        if match:
+            counted = _COUNT.fullmatch(match["text"])
+            entries.append([None if counted else match["kind"], match["time"] or "",
+                            [] if counted else [match["text"]]])
+            owner = len(entries) - 1
+            kept.append(line if counted else owner)  # int: rewritten below
+        elif owner is not None and not _STATUS_LINE.match(line):
+            entries[owner][2].append(_TIME.sub("", line, count=1))
+        else:
+            owner = None
             kept.append(line)
-            continue
-        if match["kind"] == "raw ":
+    if not any(parts for _, _, parts in entries):
+        return 0
+    moved, pending_raw = 0, None
+    for kind, _, parts in entries:
+        text = "\n".join(parts)
+        if kind is None:  # lines left behind by an earlier migration
+            if parts:
+                store.add({"legacy": True, "raw": "", "final": text})
+                moved += 1
+        elif kind == "raw ":
             if pending_raw is not None:
                 store.add({"legacy": True, "raw": pending_raw, "final": pending_raw})
                 moved += 1
-            pending_raw = match["text"]
+            pending_raw = text
         else:
-            store.add({"legacy": True, "raw": pending_raw or "",
-                       "final": match["text"]})
+            store.add({"legacy": True, "raw": pending_raw or "", "final": text})
             moved += 1
             pending_raw = None
-        kept.append(f"{match['time'] or ''}[{match['kind']}] "
-                    f"{len(match['text'].split())} words (moved to private history)")
     if pending_raw is not None:
         store.add({"legacy": True, "raw": pending_raw, "final": pending_raw})
         moved += 1
+    out = []
+    for item in kept:
+        if isinstance(item, int):
+            kind, at, parts = entries[item]
+            item = (f"{at}[{kind}] {len(' '.join(parts).split())} words "
+                    f"(moved to private history)")
+        out.append(item)
     tmp = log_path.with_suffix(".tmp")
-    tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
     os.replace(tmp, log_path)
     return moved

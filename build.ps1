@@ -4,10 +4,9 @@
 
 $ErrorActionPreference = "Stop"
 Push-Location $PSScriptRoot
+$dist = "dist\DicteeLocale"
+$keep = Join-Path $env:TEMP "DicteeLocale-keep"
 try {
-    $dist = "dist\DicteeLocale"
-    $keep = Join-Path $env:TEMP "DicteeLocale-keep"
-
     Stop-Process -Name DicteeLocale -Force -ErrorAction SilentlyContinue
     Start-Sleep 1
     New-Item -ItemType Directory -Force $keep | Out-Null
@@ -23,19 +22,16 @@ try {
         --add-data "sons/coller.wav;sons" --add-data "sons/envoyer.wav;sons" `
         --add-data "sons/colibri.wav;sons" main.py
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
-
-    if (Test-Path "$keep\config.json") {
-        Copy-Item "$keep\config.json" $dist -Force
-    } else {
-        Copy-Item config.json $dist -Force
-    }
-    if (Test-Path "$keep\dictation.log") {
-        Copy-Item "$keep\dictation.log" $dist -Force
-    }
-    Remove-Item $keep -Recurse -Force  # the log copy holds dictated text
-
-    Start-Process "$dist\DicteeLocale.exe"
-    Write-Host "Built and relaunched $dist\DicteeLocale.exe"
 } finally {
+    # Put the exe's own files back, even after a failed build, then delete
+    # the copy: logs from old versions may still hold dictated text.
+    New-Item -ItemType Directory -Force $dist | Out-Null
+    foreach ($f in "config.json", "dictation.log") {
+        if (Test-Path "$keep\$f") { Copy-Item "$keep\$f" $dist -Force }
+    }
+    if (-not (Test-Path "$dist\config.json")) { Copy-Item config.json $dist -Force }
+    Remove-Item $keep -Recurse -Force -ErrorAction SilentlyContinue
     Pop-Location
 }
+Start-Process "$PSScriptRoot\$dist\DicteeLocale.exe"
+Write-Host "Built and relaunched $dist\DicteeLocale.exe"
