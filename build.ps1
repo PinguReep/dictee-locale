@@ -14,6 +14,7 @@ try {
         if (Test-Path "$dist\$f") { Copy-Item "$dist\$f" $keep -Force }
     }
 
+    $ErrorActionPreference = "Continue"  # PyInstaller logs INFO lines to stderr
     & .venv\Scripts\pyinstaller --noconfirm --noconsole --onedir `
         --name DicteeLocale --icon app.ico `
         --collect-all faster_whisper --collect-all ctranslate2 `
@@ -21,6 +22,7 @@ try {
         --add-data ".venv\Lib\site-packages\nvidia;nvidia" `
         --add-data "sons/coller.wav;sons" --add-data "sons/envoyer.wav;sons" `
         --add-data "sons/colibri.wav;sons" main.py
+    $ErrorActionPreference = "Stop"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed ($LASTEXITCODE)" }
 } finally {
     # Put the exe's own files back, even after a failed build, then delete

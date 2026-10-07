@@ -1,5 +1,7 @@
 # Dictée Locale
 
+🇬🇧 [English version](README.en.md)
+
 Dictée vocale pour Windows, **100 % locale**. Maintiens **Ctrl+Alt** dans
 n'importe quelle application, parle en **français ou en anglais**, relâche :
 ta voix est transcrite sur ton PC, nettoyée (plus de « euh », de
@@ -139,7 +141,8 @@ courte pause :
   fin : « colibri » ou « envoie » au milieu d'une phrase ne déclenchent rien,
   les longs silences non plus. « Colibri » a été choisi car aucun mot courant
   ne lui ressemble.
-- En anglais : « Colibri, paste. » / « Colibri, send. ».
+- En anglais : « Colibri, paste. » / « Colibri, send. » (ou « send it »,
+  « paste this »).
 - Pour désactiver : `"voice_commands": false`.
 
 ## Réglages (`config.json`)
@@ -218,7 +221,8 @@ jamais le texte dicté).
   `HALLUCINATION_PATTERNS` dans `main.py`.
 
 **Mauvais micro**
-- Clique sur la pilule pendant la dictée et choisis le bon micro.
+- Clique sur le drapeau de la pilule pendant la dictée et choisis le bon
+  micro.
 
 ## Outils
 

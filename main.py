@@ -521,7 +521,8 @@ VOICE_SEND_SPLITS = {
     ("en", "voi"), ("en", "voye"), ("en", "voyer"), ("en", "voyez"),
     ("an", "voie"), ("an", "voix"), ("en", "vouah"), ("au", "revoir"),
 }
-VOICE_OBJECT_WORDS = {"ca", "le", "la", "les"}  # "colle ça", "envoie-le"
+VOICE_OBJECT_WORDS = {"ca", "le", "la", "les",  # "colle ça", "envoie-le"
+                      "it", "this", "that"}     # "send it", "paste this"
 VOICE_TAIL_SECONDS = 4.0
 VOICE_SILENCE_SECONDS = 0.6  # silence required after the command (live check)
 VOICE_CHECK_INTERVAL = 1.0

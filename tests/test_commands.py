@@ -25,6 +25,9 @@ E = main.extract_voice_command
     ("y'a pas de soucis, colibricole", ("y'a pas de soucis", "paste")),
     ("Ok. Colibrienvoie.", ("Ok.", "send")),
     ("See you. Colibri, send.", ("See you.", "send")),
+    ("Thanks a lot. Colibri, send it.", ("Thanks a lot.", "send")),
+    ("Here is the plan. Calibri, paste this.", ("Here is the plan.", "paste")),
+    ("Sounds good. Colibri paste.", ("Sounds good.", "paste")),
     ("Colibri, envoie.", ("", "send")),
     ("ok Colibri envoie", ("ok", "send")),
     # must not trigger
