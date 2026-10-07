@@ -233,8 +233,9 @@ jamais le texte dicté).
 (noms d'IA, franglais, registre familier) et les garde chiffrées comme
 références. `benchmark.py` compare ensuite Whisper turbo et large-v3,
 Parakeet v3, Canary 1B v2 et Qwen3-ASR, et n'affiche que des scores (taux
-d'erreur, termes du vocabulaire ratés, latence). Les dictées validées à la
-main avec audio (`save_audio`) s'ajoutent aux références.
+d'erreur, termes du vocabulaire ratés, latence). Tes vraies dictées validées
+à la main avec audio (`save_audio`) ne s'ajoutent aux références que si tu
+le demandes : `benchmark.py --avec-dictees`.
 
 Les moteurs testés vivent dans un environnement séparé pour ne pas alourdir
 l'app :

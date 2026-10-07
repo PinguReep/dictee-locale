@@ -1,13 +1,15 @@
 """Benchmarks speech engines on YOUR voice (local only, aggregate output only).
 
 References come from the encrypted history: the recording session
-(tools/calibration.py) and dictations validated by hand in the review box,
-when their audio was kept. Never prints any dictated text.
+(tools/calibration.py). Real dictations validated by hand in the review box
+(audio kept) are added only with --avec-dictees. Never prints any dictated
+text.
 
 Run it with the benchmark environment (engines are heavy, kept apart from
 the app):
     .venv-bench\\Scripts\\python tools\\benchmark.py
     .venv-bench\\Scripts\\python tools\\benchmark.py fw:large-v3-turbo onnx:nemo-parakeet-tdt-0.6b-v3
+    .venv-bench\\Scripts\\python tools\\benchmark.py --avec-dictees
 
 Engines:
     fw:<model>     faster-whisper, same decoding options and vocabulary
@@ -117,9 +119,12 @@ ENGINES = {"fw": faster_whisper_engine, "onnx": onnx_asr_engine,
            "qwen3": qwen3_engine}
 
 
-def load_samples(store):
+def load_samples(store, with_dictations=False):
+    """Recording-session takes; real dictations only when asked explicitly."""
     return [r for r in store.records()
-            if r.get("audio") and r.get("validated_by") == "user" and r.get("final")]
+            if r.get("audio") and r.get("final")
+            and (r.get("calibration")
+                 or (with_dictations and r.get("validated_by") == "user"))]
 
 
 def evaluate(spec, samples, audio_of, vocabulary):
@@ -149,12 +154,14 @@ def evaluate(spec, samples, audio_of, vocabulary):
             "latency": statistics.median(latencies), "load": load}
 
 
-def main(specs):
+def main(args):
+    with_dictations = "--avec-dictees" in args
+    specs = [a for a in args if not a.startswith("--")] or DEFAULT_ENGINES
     store = PrivateStore()
-    samples = load_samples(store)
+    samples = load_samples(store, with_dictations)
     if not samples:
         print("Aucune référence : lance d'abord tools\\calibration.py (séance "
-              "d'enregistrement) ou valide des dictées à la main avec save_audio.")
+              "d'enregistrement).")
         return
     vocabulary = Vocabulary()
     cache = {}
@@ -178,4 +185,4 @@ def main(specs):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:] or DEFAULT_ENGINES)
+    main(sys.argv[1:])

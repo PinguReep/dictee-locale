@@ -104,14 +104,18 @@ class Session:
         self.button.bind("<ButtonPress-1>", self.start)
         self.button.bind("<ButtonRelease-1>", self.stop)
         root.bind("<BackSpace>", self.redo)
-        root.bind("<Escape>", lambda e: root.destroy())
+        root.bind("<Escape>", self.quit)
+        root.protocol("WM_DELETE_WINDOW", self.quit)
         self.show()
 
     def show(self):
         if self.index >= len(SENTENCES):
+            repaired = self.verify()
             self.progress.config(text=f"{len(SENTENCES)}/{len(SENTENCES)} — terminé")
             self.sentence.config(text="Merci ! Le banc d'essai peut tourner "
                                       "sur ta voix.")
+            if repaired:
+                self.status.config(text=f"✓ Enregistrée ({repaired} fiche(s) réparée(s))")
             return
         self.progress.config(text=f"Phrase {self.index + 1}/{len(SENTENCES)}")
         self.sentence.config(text=SENTENCES[self.index])
@@ -141,16 +145,40 @@ class Session:
         if len(audio) < self.rate * 0.8:
             self.status.config(text="Trop court, recommence.")
             return
-        sentence = SENTENCES[self.index]
-        record_id = self.store.add(
-            {"calibration": True, "set": SET_NAME, "reference": sentence,
-             "final": sentence, "validated_by": "user",
-             "duration": round(len(audio) / self.rate, 1)},
-            audio.astype(np.float32), self.rate)
+        record_id = self.store.add(self._record(self.index, len(audio) / self.rate),
+                                   audio.astype(np.float32), self.rate)
         self.takes.append((self.index, record_id))
         self.status.config(text="✓ Enregistrée")
         self.index += 1
         self.show()
+
+    @staticmethod
+    def _record(index, seconds, **extra):
+        sentence = SENTENCES[index]
+        return {"calibration": True, "set": SET_NAME, "reference": sentence,
+                "final": sentence, "validated_by": "user",
+                "duration": round(seconds, 1), **extra}
+
+    def verify(self):
+        """Re-adds the records of this run missing from the history (their
+        audio is kept), so a session is never lost silently."""
+        if not self.takes:
+            return 0
+        present = {r.get("id") for r in self.store.records()}
+        repaired = 0
+        for index, record_id in self.takes:
+            got = None if record_id in present else self.store.audio(record_id)
+            if got is None:
+                continue
+            audio, rate = got
+            self.store.add(self._record(index, len(audio) / rate, id=record_id,
+                                        audio=True, rebuilt=True))
+            repaired += 1
+        return repaired
+
+    def quit(self, _event=None):
+        self.verify()
+        self.root.destroy()
 
     def redo(self, _event=None):
         if not self.takes:
