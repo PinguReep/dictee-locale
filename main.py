@@ -30,12 +30,13 @@ import sounddevice as sd
 # proxy lookup.
 OLLAMA_SESSION = requests.Session()
 OLLAMA_SESSION.trust_env = False
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, decode_audio
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from PIL import Image, ImageDraw
 
 import clipboard_win
 import fidelity
+import local_api
 import spark_learning
 from history_window import show_history
 from overlay import Overlay
@@ -116,6 +117,9 @@ DEFAULTS = {
     "spark_url": None,  # LAN OpenAI-compatible endpoint for learning analysis
     "spark_model": None,  # None = first model the endpoint serves
     "spark_auto": True,  # analyse new corrections once a day when idle
+    # Local transcription endpoint for Rémy (127.0.0.1 only, no review box,
+    # no history): port number, or None to keep it off.
+    "api_port": None,
 }
 
 LANGUAGE_LABELS = {"fr": "Français", "en": "English", "mix": "Mix FR + EN"}
@@ -844,6 +848,23 @@ def main():
           f"({config['whisper_compute_type']})...")
     model = load_whisper(config)
     print("[info] Whisper model loaded.")
+    if config.get("api_port"):
+        try:
+            local_api.start(config["api_port"], {
+                "vocabulary": vocabulary,
+                "transcribe": lambda audio, hotwords, language:
+                    transcribe(model, audio, hotwords, language),
+                "extract_command": extract_voice_command,
+                "clean": lambda text, language, terms:
+                    clean_with_ollama(text, config, language, terms)
+                    if config["ollama_enabled"] else None,
+                "voice_commands": config.get("voice_commands", True),
+                "language": lambda: config["language"],
+                "decode": lambda f: decode_audio(f, sampling_rate=config["sample_rate"]),
+                "model_name": config["whisper_model"],
+            })
+        except OSError as exc:
+            print(f"[warn] Local transcription API not started: {exc}")
 
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
