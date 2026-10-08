@@ -17,6 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BYTES = 25 * 1024 * 1024  # same ceiling as OpenAI's endpoint
 PATH = "/v1/audio/transcriptions"
+MAX_PROMPT_CHARS = 300
 
 
 def parse_multipart(content_type, body):
@@ -38,11 +39,19 @@ def parse_multipart(content_type, body):
     return fields, files
 
 
-def run_pipeline(audio, language, deps):
+def hotwords_with(base, prompt):
+    """The learned vocabulary first, then the client's own terms (Rémy sends
+    "Rémy, Motion, Claude..." in the OpenAI `prompt` field)."""
+    extra = (prompt or "").split(":")[-1].strip().rstrip(".")[:MAX_PROMPT_CHARS]
+    return ", ".join(part for part in (base, extra) if part)
+
+
+def run_pipeline(audio, language, deps, prompt=None):
     """Transcribes, applies the vocabulary rules and the faithful cleanup.
     Returns (text, voice command or None)."""
     vocabulary = deps["vocabulary"]
-    text, detected = deps["transcribe"](audio, vocabulary.hotwords(), language)
+    hotwords = hotwords_with(vocabulary.hotwords(), prompt)
+    text, detected = deps["transcribe"](audio, hotwords, language)
     command = None
     if deps.get("voice_commands") and text:
         text, command = deps["extract_command"](text)
@@ -117,7 +126,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             audio = deps["decode"](io.BytesIO(data))
             with self.server.lock:
-                text, command = run_pipeline(audio, language, deps)
+                text, command = run_pipeline(audio, language, deps, fields.get("prompt"))
         except Exception as exc:  # undecodable audio, model or cleanup failure
             print(f"[error] API transcription failed: {type(exc).__name__}: {exc}")
             return self._error(500, "transcription failed")

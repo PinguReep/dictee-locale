@@ -89,3 +89,15 @@ def test_endpoint_end_to_end_without_review_or_history():
         assert conn.getresponse().status == 400
     finally:
         server.shutdown()
+
+
+def test_client_terms_are_added_after_the_learned_vocabulary():
+    seen = {}
+
+    def transcribe(audio, hotwords, language):
+        seen["hotwords"] = hotwords
+        return "ok", language
+
+    d, _ = deps(transcribe=transcribe)
+    local_api.run_pipeline([0.0], "fr", d, "Message dicté à Rémy. Vocabulaire fréquent : Motion, Claude, TestFlight.")
+    assert seen["hotwords"] == "Rémy, Motion, Motion, Claude, TestFlight"
