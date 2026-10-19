@@ -1,5 +1,6 @@
 """Local transcription endpoint for Rémy (or any OpenAI-compatible client on
-this PC): POST /v1/audio/transcriptions.
+this PC): POST /v1/audio/transcriptions, and POST /v1/vocabulaire/corrections
+for a misheard word reported from Rémy.
 
 Same chain as hotkey dictation -- the Whisper model already loaded, the learned
 vocabulary, the faithful cleanup -- without any of the desktop parts: no review
@@ -17,6 +18,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 MAX_BYTES = 25 * 1024 * 1024  # same ceiling as OpenAI's endpoint
 PATH = "/v1/audio/transcriptions"
+# Rémy reports a misheard word: {"entendu": "...", "voulu": "..."}.
+CORRECTIONS = "/v1/vocabulaire/corrections"
+MAX_CORRECTION_BYTES = 4096
 MAX_PROMPT_CHARS = 300
 
 
@@ -101,6 +105,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._host_ok():
             return self._error(403, "host")
+        if self.path.split("?")[0] == CORRECTIONS:
+            return self._correction()
         if self.path.split("?")[0] != PATH:
             return self._error(404, "not found")
         try:
@@ -142,6 +148,29 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return None
         return self._send(200, {"text": text, "command": command})
+
+
+    def _correction(self):
+        """Learns heard -> wanted at once (the user typed it on purpose)."""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            length = 0
+        if length <= 0 or length > MAX_CORRECTION_BYTES:
+            return self._error(400, "a small JSON body is expected")
+        try:
+            body = json.loads(self.rfile.read(length).decode("utf-8"))
+            heard, wanted = str(body.get("entendu") or ""), str(body.get("voulu") or "")
+        except (ValueError, AttributeError):
+            return self._error(400, "invalid JSON")
+        try:
+            with self.server.lock:
+                rule = self.server.deps["vocabulary"].correct(heard, wanted)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        # Never the words themselves in the log (same rule as dictation.log).
+        print("[api ] correction learned from Rémy")
+        return self._send(200, {"ok": True, "de": rule["from"], "vers": rule["to"], "active": bool(rule.get("active"))})
 
 
 def start(port, deps):

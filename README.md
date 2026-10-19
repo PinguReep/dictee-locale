@@ -115,6 +115,11 @@ dictée, une boîte s'affiche au-dessus de la pilule :
 - chaque correction est retenue : une même correction vue deux fois devient
   une règle permanente, et les noms propres rejoignent le vocabulaire.
 
+Depuis **Rémy** : surligne les mots mal compris dans le champ de saisie, puis
+« Corriger la dictée » et tape le bon mot. La correction arrive ici par
+`POST /v1/vocabulaire/corrections` (127.0.0.1 seulement) et vaut tout de suite
+(pas besoin de la voir deux fois : tu l'as tapée exprès).
+
 Le vocabulaire est dans `%LOCALAPPDATA%\DicteeLocale\vocabulaire.json`
 (modifiable à la main). Avec `spark_url` (un serveur compatible OpenAI sur ton
 réseau local, comme des DGX Spark), un modèle analyse une fois par jour tes
