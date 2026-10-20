@@ -63,6 +63,20 @@ def words(text):
     return re.findall(r"[\w'’-]+", text)
 
 
+def _sub_plain(pattern, replacement, text):
+    """re.subn on the accent-free form of `text`, replacing in the original."""
+    flat, origin = [], []
+    for i, c in enumerate(text):
+        for p in plain(c):
+            flat.append(p)
+            origin.append(i)
+    flat = "".join(flat)
+    spans = [(origin[m.start()], origin[m.end() - 1] + 1) for m in pattern.finditer(flat) if m.end() > m.start()]
+    for start, end in reversed(spans):
+        text = text[:start] + replacement + text[end:]
+    return text, len(spans)
+
+
 def default_path():
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / "DicteeLocale" / "vocabulaire.json"
@@ -138,7 +152,10 @@ class Vocabulary:
         return ", ".join(reversed(out)) or None
 
     def apply_rules(self, text):
-        """Applies active rules; returns (text, number of replacements)."""
+        """Applies active rules; returns (text, number of replacements).
+
+        Rules are stored without accents ("remi"); they are matched without
+        accents too, so a rule learned on "Rémi" also fires on "rémi"."""
         keys = set(words(plain(text)))
         total = 0
         for rule in self.data["rules"]:
@@ -147,10 +164,10 @@ class Vocabulary:
             context = rule.get("context")
             if context and not keys & {plain(c) for c in context}:
                 continue
-            pattern = (r"(?<![\w'’-])"
-                       + r"[\s-]+".join(re.escape(w) for w in rule["from"].split())
-                       + r"(?![\w'’-])")
-            text, n = re.subn(pattern, rule["to"], text, flags=re.IGNORECASE)
+            pattern = re.compile(r"(?<![\w'’-])"
+                                 + r"[\s-]+".join(re.escape(w) for w in rule["from"].split())
+                                 + r"(?![\w'’-])", flags=re.IGNORECASE)
+            text, n = _sub_plain(pattern, rule["to"], text)
             total += n
         return text, total
 
@@ -186,6 +203,25 @@ class Vocabulary:
         if learned:
             self.save()
         return learned
+
+    def correct(self, heard, wanted):
+        """A correction reported on purpose (from Rémy: the user selects the
+        misheard words and types the right ones). Unlike the review box, it is
+        active at once: nobody types a correction by accident. A proper noun
+        joins the terms. Returns the rule; raises ValueError on a bad pair."""
+        heard = " ".join(words(heard or ""))
+        wanted = " ".join((wanted or "").split())
+        if not heard or not wanted:
+            raise ValueError("empty")
+        if len(heard) > 80 or len(wanted) > 80 or len(heard.split()) > 4 or len(wanted.split()) > 6:
+            raise ValueError("too long: a few words, not a sentence")
+        if heard == wanted:
+            raise ValueError("nothing to correct")
+        rule = self._upsert(heard, wanted, source="remy", active=True)
+        if any(w[:1].isupper() or any(c.isdigit() for c in w) for w in words(wanted)):
+            self.add_term(wanted, save=False)
+        self.save()
+        return rule
 
     def add_proposals(self, proposals, source="spark"):
         """Adds rules proposed by the LAN model; active only once also seen
