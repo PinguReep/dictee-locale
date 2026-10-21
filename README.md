@@ -109,9 +109,13 @@ dictée, une boîte s'affiche au-dessus de la pilule :
   clic remet ce que Whisper avait entendu ; les mots retirés sont listés ;
 - sans action, le texte est collé au bout de 4 s
   (`review_timeout_seconds`, `0` = attendre) ;
-- survole la boîte pour arrêter le compte à rebours, clique dedans pour
-  corriger au clavier, puis **Entrée** (ou le bouton, ou Ctrl+Alt) pour
-  coller, **Échap** ou **Annuler** pour jeter ;
+- **Entrée** (ou appuyer-relâcher **Ctrl+Alt**) colle tout de suite et
+  **Échap** jette le texte, sans avoir à cliquer dans la boîte ni à toucher
+  la souris ;
+- pour corriger, clique dans la boîte (le compte à rebours s'arrête) :
+  **Ctrl+Retour arrière** / **Ctrl+Suppr** effacent un mot, **Ctrl+A** sélectionne
+  tout, **Maj+Entrée** va à la ligne, **Ctrl+Z** annule ; taper `@` ou `€`
+  (AltGr) ne valide plus la boîte ;
 - chaque correction est retenue : une même correction vue deux fois devient
   une règle permanente, et les noms propres rejoignent le vocabulaire.
 

@@ -110,9 +110,13 @@ the icon). After each dictation a box appears above the pill:
   back what Whisper heard; removed words are listed;
 - without any action, the text is pasted after 4 s
   (`review_timeout_seconds`, `0` = wait);
-- hover over the box to stop the countdown, click inside to fix things with
-  the keyboard, then **Enter** (or the button, or Ctrl+Alt) to paste,
-  **Esc** or **Annuler** (*cancel*) to throw it away;
+- **Enter** (or pressing and releasing **Ctrl+Alt**) pastes right away and
+  **Esc** throws the text away, without clicking into the box or touching
+  the mouse;
+- to fix something, click into the box (the countdown stops):
+  **Ctrl+Backspace** / **Ctrl+Delete** delete a word, **Ctrl+A** selects all,
+  **Shift+Enter** adds a line break, **Ctrl+Z** undoes; typing AltGr
+  characters no longer validates the box;
 - every correction is remembered: the same correction seen twice becomes a
   permanent rule, and proper nouns join the vocabulary.
 
