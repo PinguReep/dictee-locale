@@ -88,6 +88,17 @@ def test_altgr_character_does_not_send():
     assert h.state == "recording"
 
 
+def test_review_validated_by_hotkey_release_not_by_altgr():
+    h = Harness()
+    h.state = "review"
+    h.keys("+ctrl", "+alt")
+    assert not h.c.clean_release          # not on press
+    h.keys("-alt")
+    assert h.c.clean_release              # press + release of the hotkey alone
+    h.keys("-ctrl", "+ctrl", "+alt", "+0", "-0", "-alt")
+    assert not h.c.clean_release          # AltGr+0 typed "@" in the box
+
+
 def test_stuck_keys_recovered():
     phys = {"ctrl", "alt"}
     h = Harness(physical=phys)

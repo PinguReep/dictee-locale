@@ -217,6 +217,7 @@ class HotkeyController:
         self.hands_free = False
         self.stop_pending = False
         self.other_key = False
+        self.clean_release = False
 
     def handle(self, name, is_down):
         name = normalize_key(name)
@@ -245,6 +246,8 @@ class HotkeyController:
             self.other_key = False
         elif held and is_down and name not in self.parts:
             self.other_key = True
+        # A press + release of the hotkey alone (not AltGr typing a character).
+        self.clean_release = release and not self.other_key
 
         state = self.get_state()
         if state == "idle" and press:
@@ -1223,15 +1226,40 @@ def main():
         if not event.name:
             return
         controller.handle(event.name, event.event_type == keyboard.KEY_DOWN)
-        # The hotkey validates an open review box (the paste then waits for
-        # the hotkey to be released).
-        if state["value"] == "review" and controller.held and ui["review"]:
+        # Pressing and releasing the hotkey validates an open review box. Not
+        # on press: AltGr is Ctrl+Alt, and typing "@" or "€" in the box must
+        # not paste it.
+        if state["value"] == "review" and controller.clean_release and ui["review"]:
             on_tk(ui["review"].validate)
         if debug_keys:
             print(f"[keys] {event.event_type:<4} {event.name!r:<16} "
                   f"held={sorted(controller.pressed)}")
 
     keyboard.hook(on_key_event)
+
+    # Entrée / Échap answer a shown review box even though keyboard focus is
+    # still in the target app: they are blocked there and act on the box.
+    # Every other time they pass through untouched.
+    enter_codes = set(keyboard.key_to_scan_codes("enter"))
+    blocked_downs = set()
+
+    def on_review_key(event):
+        try:
+            if event.event_type == keyboard.KEY_UP:
+                if event.scan_code in blocked_downs:
+                    blocked_downs.discard(event.scan_code)
+                    return False
+                return True
+            key = "enter" if event.scan_code in enter_codes else "esc"
+            if ui["review"] is not None and ui["review"].intercept(key):
+                blocked_downs.add(event.scan_code)
+                return False
+        except Exception as exc:  # never swallow keys because of a bug
+            print(f"[warn] Review key hook: {exc}")
+        return True
+
+    for review_key in ("enter", "esc"):
+        keyboard.hook_key(review_key, on_review_key, suppress=True)
 
     def on_microphone(index):
         names = dict(list_input_devices())
