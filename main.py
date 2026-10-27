@@ -39,6 +39,7 @@ import fidelity
 import local_api
 import spark_learning
 from history_window import show_history
+from discord_mute import DiscordMuter
 from overlay import Overlay
 from private_store import PrivateStore, migrate_plain_log
 from review_box import ReviewBox
@@ -108,6 +109,9 @@ DEFAULTS = {
     "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
     "sounds": True,  # ping on "Colibri", click on paste, click + gust on send
+    "discord_mute": False,  # pill button: mute Discord itself while recording
+    "discord_client_id": "",  # your Discord application (see README)
+    "discord_client_secret": "",
     "microphone_name": None,  # preferred over the index, which changes with USB
     "review_mode": False,  # learning phase: review box before pasting
     "review_timeout_seconds": 4,  # an untouched box pastes after this (0 = wait)
@@ -871,6 +875,7 @@ def main():
 
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
+    discord = DiscordMuter(config, save_config)
     # Last transcript, RAM only, purged after transcript_ttl_seconds so the
     # pill's resend button can paste it again.
     last_transcript = {"text": None, "at": 0.0}
@@ -966,6 +971,7 @@ def main():
                 run_spark()
 
     def quit_app(icon, item):
+        discord.restore()
         keyboard.unhook_all()
         tray.stop()
         quit_event.set()  # the overlay's tick loop closes the tk mainloop
@@ -1133,6 +1139,8 @@ def main():
                     set_state("idle")
                     return
         print("[rec ] Recording... release the hotkey to stop.")
+        if config.get("discord_mute", False):
+            discord.engage()
         if config.get("voice_commands", True):
             threading.Thread(target=watch_voice_commands, args=(my_id,),
                              daemon=True).start()
@@ -1146,6 +1154,7 @@ def main():
             my_id = session["id"]
             set_state("processing")
             audio = recorder.stop()
+        discord.release()
         threading.Thread(target=process, args=(audio, my_id, live_command),
                          daemon=True).start()
 
@@ -1157,6 +1166,7 @@ def main():
                 recorder.stop()
             session["id"] += 1
             set_state("idle")
+        discord.release()
         print("[info] Dictation cancelled.")
 
     def resend():
@@ -1167,6 +1177,7 @@ def main():
             session["id"] += 1
             my_id = session["id"]
             set_state("pasting")
+        discord.release()
         threading.Thread(target=paste_last, args=(my_id,), daemon=True).start()
 
     def paste_last(my_id):

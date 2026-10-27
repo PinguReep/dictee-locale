@@ -33,8 +33,9 @@ ov._build_panel = lambda: calls.append("panel")  # never show a window
 cy = ov_mod.HEIGHT / 2
 at = SimpleNamespace
 
-positions = {"lock": ov_mod.LOCK_X, "resend": ov_mod.RESEND_X,
-             "cancel": ov_mod.CANCEL_X, "flag": ov_mod.FLAG_X}
+positions = {"discord": ov_mod.DISCORD_X, "lock": ov_mod.LOCK_X,
+             "resend": ov_mod.RESEND_X, "cancel": ov_mod.CANCEL_X,
+             "flag": ov_mod.FLAG_X}
 for name, x in positions.items():
     ov._on_motion(at(x=x, y=cy))
     check(f"hover {name}", ov.hover, name)
@@ -63,6 +64,12 @@ ov.on_pill_click(at(x=ov_mod.RESEND_X, y=cy))
 ov.on_pill_click(at(x=ov_mod.LOCK_X, y=cy))
 check("other buttons still work", (calls, cfg["hands_free_lock"]),
       (["panel", "cancel", "resend"], True))
+ov.on_pill_click(at(x=ov_mod.DISCORD_X, y=cy))
+check("discord button toggles", cfg.get("discord_mute"), True)
+ov.on_pill_click(at(x=ov_mod.DISCORD_X, y=cy))
+check("discord button toggles back", cfg.get("discord_mute"), False)
+check("discord and lock hit areas separate",
+      ov_mod.LOCK_X - ov_mod.LOCK_R - 3 > ov_mod.DISCORD_X + ov_mod.DISCORD_R + 3, True)
 
 lt["text"] = None
 ov._on_motion(at(x=ov_mod.RESEND_X, y=cy))
