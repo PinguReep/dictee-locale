@@ -80,13 +80,16 @@ FONT = ("Segoe UI", 9)
 FONT_BOLD = ("Segoe UI", 9, "bold")
 FONT_TINY = ("Segoe UI", 7)
 
-WIDTH, HEIGHT = 440, 60
-LOCK_X = 280       # hands-free padlock
+WIDTH, HEIGHT = 480, 60
+DISCORD_X = 280    # mute Discord itself while recording
+DISCORD_R = 13
+LOCK_X = 320       # hands-free padlock
 LOCK_R = 13
-RESEND_X = 318     # paste the last transcript again
+RESEND_X = 358     # paste the last transcript again
 RESEND_R = 14
-CANCEL_X = 356     # discard the current dictation
+CANCEL_X = 396     # discard the current dictation
 CANCEL_R = 13
+DISCORD_BLURPLE = "#5865F2"
 FLAG_X = WIDTH - 42  # language flag: opens the settings panel
 FLAG_HALF_W = 24
 HOVER_FILL = "#2B3A44"
@@ -823,6 +826,7 @@ class Overlay:
                          start=(-phase * 55) % 360, extent=110, style="arc",
                          outline=PROCESS_COLOR, width=2)
 
+        self._draw_discord_button(cy)
         self._draw_lock_button(cy)
         self._draw_resend_button(cy)
         self._draw_cancel_button(cy)
@@ -992,6 +996,37 @@ class Overlay:
         ttl = self.config.get("transcript_ttl_seconds", 20)
         return max(0.0, lt["at"] + ttl - time.time())
 
+    def _draw_discord_button(self, cy):
+        """Clyde (the Discord logo) with a small mic badge: blurple when
+        Discord will be muted during dictation, steel when off."""
+        x, r = DISCORD_X, DISCORD_R
+        on = self.config.get("discord_mute", False)
+        c = self.canvas
+        if self.hover == "discord":
+            self._halo(x, cy, r + 5)
+        self._metal_circle(x, cy, r, 0.25, DISCORD_BLURPLE if on else BG_SOFT)
+        ink = "white" if on else TEXT_DIM
+        # Clyde: a wide rounded face, two side horns, two eyes "cut out"
+        fx, fy = x - 1, cy - 2
+        c.create_oval(fx - 8, fy - 5, fx + 8, fy + 5, fill=ink, width=0)
+        c.create_rectangle(fx - 9, fy - 2, fx + 9, fy + 2, fill=ink, width=0)
+        c.create_polygon(fx - 9, fy + 2, fx - 5, fy + 2, fx - 7, fy + 6,
+                         fill=ink, width=0)
+        c.create_polygon(fx + 9, fy + 2, fx + 5, fy + 2, fx + 7, fy + 6,
+                         fill=ink, width=0)
+        eye = DISCORD_BLURPLE if on else BG_SOFT
+        c.create_oval(fx - 5, fy - 2, fx - 2, fy + 2, fill=eye, width=0)
+        c.create_oval(fx + 2, fy - 2, fx + 5, fy + 2, fill=eye, width=0)
+        # mic badge, bottom-right; struck through when muting is on
+        mx, my = x + 8, cy + 7
+        c.create_oval(mx - 5, my - 5, mx + 5, my + 5,
+                      fill=BG_SOFT if on else BG, outline=ink, width=1)
+        c.create_rectangle(mx - 1, my - 3, mx + 1, my + 1, fill=ink, width=0)
+        c.create_line(mx, my + 1, mx, my + 3, fill=ink, width=1)
+        if on:
+            c.create_line(mx - 4, my + 4, mx + 4, my - 4, fill=DOT_COLOR,
+                          width=2)
+
     def _draw_lock_button(self, cy):
         x, r = LOCK_X, LOCK_R
         locked = self.config.get("hands_free_lock", False)
@@ -1045,6 +1080,8 @@ class Overlay:
     def _button_at(self, x, y):
         """Name of the pill button under (x, y), or None."""
         cy = HEIGHT / 2
+        if math.hypot(x - DISCORD_X, y - cy) <= DISCORD_R + 3:
+            return "discord"
         if math.hypot(x - LOCK_X, y - cy) <= LOCK_R + 3:
             return "lock"
         if (math.hypot(x - RESEND_X, y - cy) <= RESEND_R + 3
@@ -1103,6 +1140,11 @@ class Overlay:
             print("[ui  ] cancel clicked")
             self.close_panel()
             self.actions.get("cancel", lambda: None)()
+        elif button == "discord":
+            on = not self.config.get("discord_mute", False)
+            self.config["discord_mute"] = on
+            self.save_config(self.config)
+            print(f"[ui  ] discord mute {'on' if on else 'off'}")
         elif button == "flag":
             self.toggle_panel()
 

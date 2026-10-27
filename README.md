@@ -48,6 +48,10 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
 - **Confidentialité** : historique chiffré sur ton PC, texte dicté exclu de
   l'historique Win+V et de la synchro cloud du presse-papier, ton contenu
   copié (images, fichiers…) restauré après chaque collage.
+- **Discord** : un bouton avec le logo Discord et un micro. Activé, il coupe
+  ton micro **dans Discord** (son propre bouton muet) pendant la dictée et le
+  remet comme avant à la fin : un micro déjà coupé reste coupé. Indépendant
+  du casque. Nécessite une petite configuration, voir plus bas.
 - **Sons discrets** : petit clic de bois quand le texte est collé, clic
   puis courte rafale de vent quand le message est envoyé. Un tintement de
   verre confirme aussitôt que « Colibri » a été compris.
@@ -91,6 +95,7 @@ cliquables (ton curseur ne perd jamais le focus) :
 | Élément | Action |
 |---|---|
 | Drapeau | Ouvre les réglages : langue et micro. Tout se ferme quand tu relâches |
+| Discord | Active/désactive la coupure du micro Discord pendant la dictée |
 | 🔒 Cadenas | Active/désactive le mode mains libres (reste activé jusqu'au prochain clic) |
 | ↺ | Recolle le dernier texte au curseur et ferme la pilule (visible 20 s après une dictée). Si tu maintiens Ctrl+Alt, le collage se fait dès que tu relâches |
 | ✕ | Annule la dictée en cours : rien n'est collé |
@@ -154,6 +159,24 @@ courte pause :
   « paste this »).
 - Pour désactiver : `"voice_commands": false`.
 
+## Couper Discord pendant la dictée
+
+L'app pilote le bouton muet de Discord via son API locale (RPC). Discord ne
+l'autorise qu'à une application qui t'appartient, d'où ce réglage unique :
+
+1. Va sur <https://discord.com/developers/applications> → **New Application**
+   (nom libre, ex. « Dictée Locale »).
+2. Onglet **OAuth2** → **Redirects** → ajoute `http://127.0.0.1` → **Save**.
+3. Copie le **Client ID** et le **Client Secret** (bouton *Reset Secret*).
+4. Dans `config.json` (à côté de l'exe) :
+   `"discord_client_id": "…"` et `"discord_client_secret": "…"`.
+5. Active le bouton Discord de la pilule et lance une dictée : Discord
+   affiche une fenêtre **Authorize** une seule fois. Les jetons sont ensuite
+   gardés dans `config.json` et renouvelés automatiquement.
+
+Le secret reste sur ton PC. Si Discord est fermé, le bouton ne fait rien
+(une ligne dans le journal).
+
 ## Réglages (`config.json`)
 
 Le fichier est à côté de l'exe. Il est créé dès que tu changes un réglage
@@ -174,6 +197,8 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
 | `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
+| `discord_mute` | `false` | Coupe Discord pendant la dictée (bouton Discord de la pilule) |
+| `discord_client_id` / `discord_client_secret` | vide | Ton application Discord (voir plus haut) |
 | `sounds` | `true` | Tintement quand « Colibri » est compris, clic au collage, clic + rafale à chaque envoi |
 | `review_mode` | `false` | Boîte de relecture avant collage (phase d'apprentissage) |
 | `review_timeout_seconds` | `4` | Collage automatique d'une boîte non touchée (`0` = attendre) |
@@ -215,6 +240,13 @@ jamais le texte dicté).
 - Clique sur ✕ pour annuler. Si Ollama tarde à répondre, l'app colle le texte
   brut au bout d'une dizaine de secondes au lieu de rester bloquée.
 - Le journal `dictation.log` est horodaté : il montre l'étape qui a traîné.
+
+**Discord n'est pas coupé**
+- Identifiants manquants : le journal dit `set discord_client_id…`.
+- Fenêtre *Authorize* ignorée ou refusée : relance une dictée, elle réapparaît.
+- Discord fermé : `Discord is not running`.
+- Si l'app plante en pleine dictée, Discord peut rester muet : clique sur son
+  micro.
 
 **Le texte n'est pas nettoyé (« euh » conservés)**
 - Ollama n'est pas lancé ou le modèle manque : `ollama pull qwen2.5:7b`.

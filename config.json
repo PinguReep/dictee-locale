@@ -27,5 +27,8 @@
   "language": "fr",
   "transcript_ttl_seconds": 20,
   "hands_free_lock": false,
-  "voice_commands": true
+  "voice_commands": true,
+  "discord_mute": false,
+  "discord_client_id": "",
+  "discord_client_secret": ""
 }
