@@ -876,6 +876,8 @@ def main():
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
     discord = DiscordMuter(config, save_config)
+    if config.get("discord_mute", False):
+        discord.warm_up()
     # Last transcript, RAM only, purged after transcript_ttl_seconds so the
     # pill's resend button can paste it again.
     last_transcript = {"text": None, "at": 0.0}
@@ -972,6 +974,7 @@ def main():
 
     def quit_app(icon, item):
         discord.restore()
+        discord.disconnect()
         keyboard.unhook_all()
         tray.stop()
         quit_event.set()  # the overlay's tick loop closes the tk mainloop
