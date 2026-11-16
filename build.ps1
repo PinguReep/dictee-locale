@@ -18,7 +18,7 @@ try {
     & .venv\Scripts\pyinstaller --noconfirm --noconsole --onedir `
         --name DicteeLocale --icon app.ico `
         --collect-all faster_whisper --collect-all ctranslate2 `
-        --collect-all onnxruntime `
+        --collect-all onnxruntime --collect-all winrt `
         --add-data ".venv\Lib\site-packages\nvidia;nvidia" `
         --add-data "sons/coller.wav;sons" --add-data "sons/envoyer.wav;sons" `
         --add-data "sons/colibri.wav;sons" main.py

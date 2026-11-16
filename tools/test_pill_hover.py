@@ -33,8 +33,10 @@ ov._build_panel = lambda: calls.append("panel")  # never show a window
 cy = ov_mod.HEIGHT / 2
 at = SimpleNamespace
 
-positions = {"lock": ov_mod.LOCK_X, "resend": ov_mod.RESEND_X,
-             "cancel": ov_mod.CANCEL_X, "flag": ov_mod.FLAG_X}
+positions = {"spotify": ov_mod.SPOTIFY_X,
+             "discord": ov_mod.DISCORD_X, "lock": ov_mod.LOCK_X,
+             "resend": ov_mod.RESEND_X, "cancel": ov_mod.CANCEL_X,
+             "flag": ov_mod.FLAG_X}
 for name, x in positions.items():
     ov._on_motion(at(x=x, y=cy))
     check(f"hover {name}", ov.hover, name)
@@ -63,6 +65,21 @@ ov.on_pill_click(at(x=ov_mod.RESEND_X, y=cy))
 ov.on_pill_click(at(x=ov_mod.LOCK_X, y=cy))
 check("other buttons still work", (calls, cfg["hands_free_lock"]),
       (["panel", "cancel", "resend"], True))
+ov.on_pill_click(at(x=ov_mod.DISCORD_X, y=cy))
+check("discord button toggles", cfg.get("discord_mute"), True)
+ov.on_pill_click(at(x=ov_mod.DISCORD_X, y=cy))
+check("discord button toggles back", cfg.get("discord_mute"), False)
+ov.on_pill_click(at(x=ov_mod.SPOTIFY_X, y=cy))
+check("spotify button toggles", cfg.get("spotify_pause"), True)
+ov.on_pill_click(at(x=ov_mod.SPOTIFY_X, y=cy))
+check("spotify button toggles back", cfg.get("spotify_pause"), False)
+xs = sorted([(ov_mod.RESEND_X, ov_mod.RESEND_R), (ov_mod.CANCEL_X, ov_mod.CANCEL_R),
+             (ov_mod.LOCK_X, ov_mod.LOCK_R), (ov_mod.DISCORD_X, ov_mod.DISCORD_R),
+             (ov_mod.SPOTIFY_X, ov_mod.SPOTIFY_R)])
+check("button hit areas separate",
+      all(b[0] - b[1] - 3 > a[0] + a[1] + 3 for a, b in zip(xs, xs[1:])), True)
+check("spotify and flag separate",
+      ov_mod.FLAG_X - ov_mod.FLAG_HALF_W > ov_mod.SPOTIFY_X + ov_mod.SPOTIFY_R + 3, True)
 
 lt["text"] = None
 ov._on_motion(at(x=ov_mod.RESEND_X, y=cy))

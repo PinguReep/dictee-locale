@@ -39,6 +39,8 @@ import fidelity
 import local_api
 import spark_learning
 from history_window import show_history
+from discord_mute import DiscordMuter
+from spotify_pause import SpotifyPauser
 from overlay import Overlay
 from private_store import PrivateStore, migrate_plain_log
 from review_box import ReviewBox
@@ -108,6 +110,10 @@ DEFAULTS = {
     "voice_commands": True,  # "Colibri, colle." / "Colibri, envoie." at the end
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
     "sounds": True,  # ping on "Colibri", click on paste, click + gust on send
+    "discord_mute": False,  # pill button: mute Discord itself while recording
+    "spotify_pause": False,  # pill button: pause Spotify while recording
+    "discord_client_id": "",  # your Discord application (see README)
+    "discord_client_secret": "",
     "microphone_name": None,  # preferred over the index, which changes with USB
     "review_mode": False,  # learning phase: review box before pasting
     "review_timeout_seconds": 4,  # an untouched box pastes after this (0 = wait)
@@ -217,6 +223,7 @@ class HotkeyController:
         self.hands_free = False
         self.stop_pending = False
         self.other_key = False
+        self.clean_release = False
 
     def handle(self, name, is_down):
         name = normalize_key(name)
@@ -245,6 +252,8 @@ class HotkeyController:
             self.other_key = False
         elif held and is_down and name not in self.parts:
             self.other_key = True
+        # A press + release of the hotkey alone (not AltGr typing a character).
+        self.clean_release = release and not self.other_key
 
         state = self.get_state()
         if state == "idle" and press:
@@ -868,6 +877,10 @@ def main():
 
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
+    discord = DiscordMuter(config, save_config)
+    spotify = SpotifyPauser()
+    if config.get("discord_mute", False):
+        discord.warm_up()
     # Last transcript, RAM only, purged after transcript_ttl_seconds so the
     # pill's resend button can paste it again.
     last_transcript = {"text": None, "at": 0.0}
@@ -963,6 +976,9 @@ def main():
                 run_spark()
 
     def quit_app(icon, item):
+        discord.restore()
+        discord.disconnect()
+        spotify.restore()
         keyboard.unhook_all()
         tray.stop()
         quit_event.set()  # the overlay's tick loop closes the tk mainloop
@@ -1130,6 +1146,10 @@ def main():
                     set_state("idle")
                     return
         print("[rec ] Recording... release the hotkey to stop.")
+        if config.get("discord_mute", False):
+            discord.engage()
+        if config.get("spotify_pause", False):
+            spotify.engage()
         if config.get("voice_commands", True):
             threading.Thread(target=watch_voice_commands, args=(my_id,),
                              daemon=True).start()
@@ -1143,6 +1163,8 @@ def main():
             my_id = session["id"]
             set_state("processing")
             audio = recorder.stop()
+        discord.release()
+        spotify.release()
         threading.Thread(target=process, args=(audio, my_id, live_command),
                          daemon=True).start()
 
@@ -1154,6 +1176,8 @@ def main():
                 recorder.stop()
             session["id"] += 1
             set_state("idle")
+        discord.release()
+        spotify.release()
         print("[info] Dictation cancelled.")
 
     def resend():
@@ -1164,6 +1188,8 @@ def main():
             session["id"] += 1
             my_id = session["id"]
             set_state("pasting")
+        discord.release()
+        spotify.release()
         threading.Thread(target=paste_last, args=(my_id,), daemon=True).start()
 
     def paste_last(my_id):
@@ -1223,15 +1249,40 @@ def main():
         if not event.name:
             return
         controller.handle(event.name, event.event_type == keyboard.KEY_DOWN)
-        # The hotkey validates an open review box (the paste then waits for
-        # the hotkey to be released).
-        if state["value"] == "review" and controller.held and ui["review"]:
+        # Pressing and releasing the hotkey validates an open review box. Not
+        # on press: AltGr is Ctrl+Alt, and typing "@" or "€" in the box must
+        # not paste it.
+        if state["value"] == "review" and controller.clean_release and ui["review"]:
             on_tk(ui["review"].validate)
         if debug_keys:
             print(f"[keys] {event.event_type:<4} {event.name!r:<16} "
                   f"held={sorted(controller.pressed)}")
 
     keyboard.hook(on_key_event)
+
+    # Entrée / Échap answer a shown review box even though keyboard focus is
+    # still in the target app: they are blocked there and act on the box.
+    # Every other time they pass through untouched.
+    enter_codes = set(keyboard.key_to_scan_codes("enter"))
+    blocked_downs = set()
+
+    def on_review_key(event):
+        try:
+            if event.event_type == keyboard.KEY_UP:
+                if event.scan_code in blocked_downs:
+                    blocked_downs.discard(event.scan_code)
+                    return False
+                return True
+            key = "enter" if event.scan_code in enter_codes else "esc"
+            if ui["review"] is not None and ui["review"].intercept(key):
+                blocked_downs.add(event.scan_code)
+                return False
+        except Exception as exc:  # never swallow keys because of a bug
+            print(f"[warn] Review key hook: {exc}")
+        return True
+
+    for review_key in ("enter", "esc"):
+        keyboard.hook_key(review_key, on_review_key, suppress=True)
 
     def on_microphone(index):
         names = dict(list_input_devices())

@@ -5,3 +5,6 @@ requests
 numpy
 pystray
 pillow
+winrt-runtime
+winrt-Windows.Media.Control
+winrt-Windows.Foundation

@@ -48,7 +48,9 @@ def capture(hwnd, w, h):
 
 root = tk.Tk()
 root.withdraw()
+import json, os
 cfg = {"language": "fr", "hands_free_lock": True, "transcript_ttl_seconds": 20}
+cfg.update(json.loads(os.environ.get("RENDER_CFG", "{}")))  # e.g. {"discord_mute": true}
 state = {"value": "recording"}
 levels = []
 lt = {"text": "x", "at": time.time()}
