@@ -29,6 +29,7 @@
   "hands_free_lock": false,
   "voice_commands": true,
   "discord_mute": false,
+  "spotify_pause": false,
   "discord_client_id": "",
   "discord_client_secret": ""
 }
