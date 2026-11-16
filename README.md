@@ -52,6 +52,9 @@ Rien ne part sur Internet : pas de compte, pas d'abonnement, pas de cloud.
   ton micro **dans Discord** (son propre bouton muet) pendant la dictée et le
   remet comme avant à la fin : un micro déjà coupé reste coupé. Indépendant
   du casque. Nécessite une petite configuration, voir plus bas.
+- **Spotify** : un bouton avec le logo Spotify. Activé, il met Spotify en
+  pause pendant la dictée si une musique joue, et la relance à la fin. Une
+  musique déjà en pause reste en pause. Aucun réglage nécessaire.
 - **Sons discrets** : petit clic de bois quand le texte est collé, clic
   puis courte rafale de vent quand le message est envoyé. Un tintement de
   verre confirme aussitôt que « Colibri » a été compris.
@@ -95,6 +98,7 @@ cliquables (ton curseur ne perd jamais le focus) :
 | Élément | Action |
 |---|---|
 | Drapeau | Ouvre les réglages : langue et micro. Tout se ferme quand tu relâches |
+| Spotify | Active/désactive la pause de Spotify pendant la dictée |
 | Discord | Active/désactive la coupure du micro Discord pendant la dictée |
 | 🔒 Cadenas | Active/désactive le mode mains libres (reste activé jusqu'au prochain clic) |
 | ↺ | Recolle le dernier texte au curseur et ferme la pilule (visible 20 s après une dictée). Si tu maintiens Ctrl+Alt, le collage se fait dès que tu relâches |
@@ -197,6 +201,7 @@ depuis la pilule ; tu peux aussi copier celui du dépôt.
 | `transcript_ttl_seconds` | `20` | Durée de disponibilité du renvoi ↺ |
 | `voice_commands` | `true` | Commandes « Colibri, colle. » / « Colibri, envoie. » |
 | `ollama_keep_alive` | `-1` | Garde le modèle de nettoyage chargé (`-1` = toujours, ou par ex. `"30m"`) |
+| `spotify_pause` | `false` | Met Spotify en pause pendant la dictée (bouton Spotify de la pilule) |
 | `discord_mute` | `false` | Coupe Discord pendant la dictée (bouton Discord de la pilule) |
 | `discord_client_id` / `discord_client_secret` | vide | Ton application Discord (voir plus haut) |
 | `sounds` | `true` | Tintement quand « Colibri » est compris, clic au collage, clic + rafale à chaque envoi |

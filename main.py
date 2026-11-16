@@ -40,6 +40,7 @@ import local_api
 import spark_learning
 from history_window import show_history
 from discord_mute import DiscordMuter
+from spotify_pause import SpotifyPauser
 from overlay import Overlay
 from private_store import PrivateStore, migrate_plain_log
 from review_box import ReviewBox
@@ -110,6 +111,7 @@ DEFAULTS = {
     "ollama_keep_alive": -1,  # keep the cleanup model loaded (-1 = always)
     "sounds": True,  # ping on "Colibri", click on paste, click + gust on send
     "discord_mute": False,  # pill button: mute Discord itself while recording
+    "spotify_pause": False,  # pill button: pause Spotify while recording
     "discord_client_id": "",  # your Discord application (see README)
     "discord_client_secret": "",
     "microphone_name": None,  # preferred over the index, which changes with USB
@@ -876,6 +878,7 @@ def main():
     levels = collections.deque(maxlen=64)
     quit_event = threading.Event()
     discord = DiscordMuter(config, save_config)
+    spotify = SpotifyPauser()
     if config.get("discord_mute", False):
         discord.warm_up()
     # Last transcript, RAM only, purged after transcript_ttl_seconds so the
@@ -975,6 +978,7 @@ def main():
     def quit_app(icon, item):
         discord.restore()
         discord.disconnect()
+        spotify.restore()
         keyboard.unhook_all()
         tray.stop()
         quit_event.set()  # the overlay's tick loop closes the tk mainloop
@@ -1144,6 +1148,8 @@ def main():
         print("[rec ] Recording... release the hotkey to stop.")
         if config.get("discord_mute", False):
             discord.engage()
+        if config.get("spotify_pause", False):
+            spotify.engage()
         if config.get("voice_commands", True):
             threading.Thread(target=watch_voice_commands, args=(my_id,),
                              daemon=True).start()
@@ -1158,6 +1164,7 @@ def main():
             set_state("processing")
             audio = recorder.stop()
         discord.release()
+        spotify.release()
         threading.Thread(target=process, args=(audio, my_id, live_command),
                          daemon=True).start()
 
@@ -1170,6 +1177,7 @@ def main():
             session["id"] += 1
             set_state("idle")
         discord.release()
+        spotify.release()
         print("[info] Dictation cancelled.")
 
     def resend():
@@ -1181,6 +1189,7 @@ def main():
             my_id = session["id"]
             set_state("pasting")
         discord.release()
+        spotify.release()
         threading.Thread(target=paste_last, args=(my_id,), daemon=True).start()
 
     def paste_last(my_id):

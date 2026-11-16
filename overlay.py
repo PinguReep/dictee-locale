@@ -80,16 +80,20 @@ FONT = ("Segoe UI", 9)
 FONT_BOLD = ("Segoe UI", 9, "bold")
 FONT_TINY = ("Segoe UI", 7)
 
-WIDTH, HEIGHT = 480, 60
-DISCORD_X = 280    # mute Discord itself while recording
-DISCORD_R = 13
-LOCK_X = 320       # hands-free padlock
-LOCK_R = 13
-RESEND_X = 358     # paste the last transcript again
+WIDTH, HEIGHT = 520, 60
+# Actions next to the glow, then the three toggles grouped near the flag.
+RESEND_X = 282     # paste the last transcript again
 RESEND_R = 14
-CANCEL_X = 396     # discard the current dictation
+CANCEL_X = 320     # discard the current dictation
 CANCEL_R = 13
+LOCK_X = 358       # hands-free padlock
+LOCK_R = 13
+DISCORD_X = 396    # mute Discord itself while recording
+DISCORD_R = 13
+SPOTIFY_X = 434    # pause Spotify while recording
+SPOTIFY_R = 13
 DISCORD_BLURPLE = "#5865F2"
+SPOTIFY_GREEN = "#1DB954"
 FLAG_X = WIDTH - 42  # language flag: opens the settings panel
 FLAG_HALF_W = 24
 HOVER_FILL = "#2B3A44"
@@ -827,6 +831,7 @@ class Overlay:
                          outline=PROCESS_COLOR, width=2)
 
         self._draw_discord_button(cy)
+        self._draw_spotify_button(cy)
         self._draw_lock_button(cy)
         self._draw_resend_button(cy)
         self._draw_cancel_button(cy)
@@ -1027,6 +1032,33 @@ class Overlay:
             c.create_line(mx - 4, my + 4, mx + 4, my - 4, fill=DOT_COLOR,
                           width=2)
 
+    def _draw_spotify_button(self, cy):
+        """Spotify's three sound waves with a pause badge: green when
+        Spotify will be paused during dictation, steel when off."""
+        x, r = SPOTIFY_X, SPOTIFY_R
+        on = self.config.get("spotify_pause", False)
+        c = self.canvas
+        if self.hover == "spotify":
+            self._halo(x, cy, r + 5)
+        self._metal_circle(x, cy, r, 0.55, SPOTIFY_GREEN if on else BG_SOFT)
+        ink = "#0B0B0B" if on else TEXT_DIM
+        fx, fy = x - 1, cy + 3
+        for half_w, rise, width in ((8, 4, 2), (6.5, 3, 2), (5, 2, 1)):
+            c.create_arc(fx - half_w, fy - rise * 2, fx + half_w,
+                         fy + rise * 2, start=25, extent=130, style="arc",
+                         outline=ink, width=width)
+            fy += 3.5
+        # pause badge, bottom-right
+        mx, my = x + 8, cy + 7
+        c.create_oval(mx - 5, my - 5, mx + 5, my + 5,
+                      fill=BG_SOFT if on else BG, outline=ink if not on
+                      else "white", width=1)
+        bar = "white" if on else TEXT_DIM
+        c.create_rectangle(mx - 2.5, my - 2.5, mx - 1, my + 2.5, fill=bar,
+                           width=0)
+        c.create_rectangle(mx + 1, my - 2.5, mx + 2.5, my + 2.5, fill=bar,
+                           width=0)
+
     def _draw_lock_button(self, cy):
         x, r = LOCK_X, LOCK_R
         locked = self.config.get("hands_free_lock", False)
@@ -1082,6 +1114,8 @@ class Overlay:
         cy = HEIGHT / 2
         if math.hypot(x - DISCORD_X, y - cy) <= DISCORD_R + 3:
             return "discord"
+        if math.hypot(x - SPOTIFY_X, y - cy) <= SPOTIFY_R + 3:
+            return "spotify"
         if math.hypot(x - LOCK_X, y - cy) <= LOCK_R + 3:
             return "lock"
         if (math.hypot(x - RESEND_X, y - cy) <= RESEND_R + 3
@@ -1140,6 +1174,11 @@ class Overlay:
             print("[ui  ] cancel clicked")
             self.close_panel()
             self.actions.get("cancel", lambda: None)()
+        elif button == "spotify":
+            on = not self.config.get("spotify_pause", False)
+            self.config["spotify_pause"] = on
+            self.save_config(self.config)
+            print(f"[ui  ] spotify pause {'on' if on else 'off'}")
         elif button == "discord":
             on = not self.config.get("discord_mute", False)
             self.config["discord_mute"] = on
